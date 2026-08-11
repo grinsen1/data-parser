@@ -92,9 +92,8 @@
 
 <script>
 const SURL = "https://dcrmfvfuyexjdygbupwr.supabase.co/";
-const SKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcm1mdmZ1eWV4amR5Z2J1cHdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0NjExNjYsImV4cCI6MjEwMjAzNzE2Nn0.lNe0cbwYq2yWV6tr__b6u5B9nZE2dgDk45j4KEoMhNI";
-
-const R = {}; // global results { domain: entry }
+const PAGESPEED_KEY = "AIzaSyDMSUJ9HLjOHi5TjitaHt8t6QakfO0w3BU";
+const SKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcm1mdmZ1eWV4amR5Z2J1cHdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0NjExNjYsImV4cCI6MjEwMjAzNzE2Nn0.lNe0cbwYq2yWV6tr__b6u5B9nZE2dgDk45j4KEoMhNI";const R = {}; // global results { domain: entry }
 let domains = [];
 let busy = false;
 
@@ -211,64 +210,56 @@ async function runScreenshots() {
 
   logLine(`Screenshots to fetch: ${toShot.length}`, "info");
 
-  // Fire all in parallel, poll storage
-  for (const d of toShot) { R[d].ssPending = true; }
-  render();
-
-  const POLL_EVERY = 5000;
-  const MAX_POLLS = 16; // 80 seconds max
-  const baseUrl = SURL.replace(/\/$/, "");
-
-  // Fire all requests
-  const fired = toShot.map(async d => {
-    try {
-      const resp = await fetch(`${baseUrl}/functions/v1/screenshot`, {
-        method: "POST", headers: hdr(),
-        body: JSON.stringify({ domain: d }),
-      });
-      const j = await resp.json();
-      if (j.cached && j.url) {
-        R[d].screenshot_url = j.url;
-        R[d].ssPending = false;
-        logLine(`${d}: screenshot CACHED`, "ok");
-      } else if (j.pending) {
-        logLine(`${d}: screenshot FIRED`, "info");
-      }
-      render();
-    } catch (e) { logLine(`${d}: screenshot FIRE failed: ${e}`, "err"); }
-  });
-  await Promise.all(fired);
-
-  // Poll
-  for (let poll = 0; poll < MAX_POLLS; poll++) {
-    const still = toShot.filter(d => !R[d].screenshot_url);
-    if (!still.length) break;
-
-    await new Promise(r => setTimeout(r, POLL_EVERY));
-
-    for (const d of still) {
+  // Call PageSpeed API directly (bypasses Supabase timeout)
+  for (let i = 0; i < toShot.length; i += 2) {
+    const chunk = toShot.slice(i, i + 2);
+    await Promise.all(chunk.map(async d => {
       try {
-        const resp = await fetch(`${baseUrl}/functions/v1/screenshot`, {
-          method: "POST", headers: hdr(),
-          body: JSON.stringify({ domain: d }),
-        });
-        const j = await resp.json();
-        if (j.url) {
-          R[d].screenshot_url = j.url;
-          R[d].ssPending = false;
-          logLine(`${d}: screenshot READY (poll ${poll + 1})`, "ok");
-        }
-      } catch (e) { logLine(`${d}: poll ${poll + 1} failed: ${e}`, "warn"); }
-    }
-    render();
-  }
+        // 1. Get screenshot from PageSpeed
+        const psUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=https://${d}&screenshot=true&strategy=desktop&key=${PAGESPEED_KEY}`;
+        const psResp = await fetch(psUrl, { signal: AbortSignal.timeout(60_000) });
+        if (!psResp.ok) throw new Error(`PageSpeed ${psResp.status}`);
+        const psJson = await psResp.json();
+        const b64 = psJson?.lighthouseResult?.audits?.["final-screenshot"]?.details?.data;
+        if (!b64) throw new Error("no screenshot");
 
-  // Mark remaining as failed
-  for (const d of toShot) {
-    if (!R[d].screenshot_url) {
-      R[d].ssPending = false;
-      logLine(`${d}: screenshot FAILED after ${MAX_POLLS} polls`, "err");
-    }
+        // 2. Upload to Supabase Storage
+        const clean = b64.replace(/^data:image\/\w+;base64,/, "");
+        const binary = Uint8Array.from(atob(clean), c => c.charCodeAt(0));
+        const filename = `${d}.png`;
+        
+        const upResp = await fetch(`${SURL.replace(/\/$/, "")}/storage/v1/object/screenshots/${filename}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "image/jpeg",
+            apikey: SKEY,
+            Authorization: `Bearer ${SKEY}`,
+            "x-upsert": "true",
+          },
+          body: binary,
+        });
+        
+        if (!upResp.ok && upResp.status !== 409) throw new Error(`upload ${upResp.status}`);
+
+        // 3. Get signed URL
+        const signResp = await fetch(`${SURL.replace(/\/$/, "")}/storage/v1/object/sign/screenshots/${filename}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", apikey: SKEY, Authorization: `Bearer ${SKEY}` },
+          body: JSON.stringify({ expiresIn: 31536000 }),
+        });
+        const signJson = await signResp.json();
+        
+        if (signJson.signedURL) {
+          R[d].screenshot_url = signJson.signedURL;
+          R[d].ssPending = false;
+          logLine(`${d}: screenshot OK`, "ok");
+        }
+      } catch (e) {
+        R[d].ssPending = false;
+        logLine(`${d}: screenshot FAILED: ${e}`, "err");
+      }
+    }));
+    render();
   }
   render();
 

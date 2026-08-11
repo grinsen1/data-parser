@@ -8,7 +8,6 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Domains Parser">
 <title>Domains Parser v4</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
   *{box-sizing:border-box}
   body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d0d0e;color:#f5f5f5;padding:16px}
@@ -126,22 +125,36 @@
 const SUPABASE_URL = "https://dcrmfvfuyexjdygbupwr.supabase.co/";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcm1mdmZ1eWV4amR5Z2J1cHdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0NjExNjYsImV4cCI6MjEwMjAzNzE2Nn0.lNe0cbwYq2yWV6tr__b6u5B9nZE2dgkD45j4KEoMhNI";
 
-const supabase = window.supabase?.createClient
-  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-  : null;
-
 let allEntries = [];
 let processing = false;
 let selected = new Set();
 
 // ============================================================
+// REST helper (direct fetch, no SDK)
+// ============================================================
+function restHeaders() {
+  return {
+    "apikey": SUPABASE_ANON_KEY,
+    "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+    "Content-Type": "application/json"
+  };
+}
+
+async function restFetch(path, opts = {}) {
+  const url = SUPABASE_URL.replace(/\/$/, "") + path;
+  const resp = await fetch(url, { headers: restHeaders(), ...opts });
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`REST ${opts.method || "GET"} ${path}: ${resp.status} ${err}`);
+  }
+  const text = await resp.text();
+  return text ? JSON.parse(text) : null;
+}
+
+// ============================================================
 // Init
 // ============================================================
 async function init() {
-  if (!supabase) {
-    document.body.innerHTML = '<div class="empty">Загрузите Supabase JS SDK: добавить <br>&lt;script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"&gt;&lt;/script&gt;</div>';
-    return;
-  }
   await loadEntries();
 }
 
@@ -149,13 +162,12 @@ async function init() {
 // Data loading
 // ============================================================
 async function loadEntries() {
-  const { data, error } = await supabase
-    .from("entries")
-    .select("*")
-    .order("crux_rank_global", { ascending: true, nullsLast: true });
-
-  if (error) { showError("load: " + error.message); return; }
-  allEntries = data ?? [];
+  try {
+    allEntries = await restFetch("/rest/v1/entries?select=*&order=crux_rank_global.asc.nullslast");
+  } catch (e) {
+    showError("load: " + e.message);
+    allEntries = [];
+  }
   document.getElementById("totalCount").textContent = allEntries.length;
   applyFilters();
 }
@@ -281,12 +293,20 @@ async function importDomains() {
   if (!text) return;
 
   const domains = text.split("\n").map((l) => l.trim()).filter(Boolean);
-  const rows = domains.map((d) => ({ domain: d, active: true }));
+  
+  try {
+    for (const domain of domains) {
+      await restFetch("/rest/v1/domain_list", {
+        method: "POST",
+        body: JSON.stringify({ domain, active: true })
+      });
+    }
+  } catch (e) {
+    addLog("error", "Import: " + e.message);
+    return;
+  }
 
-  const { error } = await supabase.from("domain_list").upsert(rows, { onConflict: "domain" });
-  if (error) { addLog("error", "Import: " + error.message); return; }
-
-  addLog("ok", `Добавлено доменов: ${domains.length}`);
+  addLog("ok", `Added domains: ${domains.length}`);
   document.getElementById("importText").value = "";
   document.getElementById("importPanel").classList.add("hidden");
   await loadEntries();

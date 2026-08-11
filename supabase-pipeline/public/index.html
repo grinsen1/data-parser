@@ -78,20 +78,42 @@
 const SURL = "https://dcrmfvfuyexjdygbupwr.supabase.co/";
 const SKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcm1mdmZ1eWV4amR5Z2J1cHdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0NjExNjYsImV4cCI6MjEwMjAzNzE2Nn0.lNe0cbwYq2yWV6tr__b6u5B9nZE2dgDk45j4KEoMhNI";
 
-let state = { total: 0, entries: {}, counter: { rank: 0, screenshot: 0, meta: 0 }, processing: false };
+let state = { total: 0, entries: {}, counter: { rank: 0, screenshot: 0, meta: 0 }, processing: false, _idx: 0 };
+const BATCH_SIZE = 30;
 
 async function run(phases) {
   if (state.processing) return;
   const text = document.getElementById("domainInput").value.trim();
   if (!text) return;
-  const domains = text.split("\n").map(l => l.trim()).filter(Boolean);
+  const allDomains = text.split("\n").map(l => l.trim()).filter(Boolean);
 
-  state = { total: domains.length, entries: {}, counter: { rank: 0, screenshot: 0, meta: 0 }, processing: true };
+  state = { total: allDomains.length, entries: {}, counter: { rank: 0, screenshot: 0, meta: 0 }, processing: true, _idx: 0 };
   disableButtons(true);
   document.getElementById("resultsPanel").classList.remove("hidden");
   document.getElementById("tableBody").innerHTML = "";
-  showStatus("run", `Running: ${phases.join(", ")}...`);
+  updateCounter();
 
+  // Split into batches
+  const batches = [];
+  for (let i = 0; i < allDomains.length; i += BATCH_SIZE) {
+    batches.push(allDomains.slice(i, i + BATCH_SIZE));
+  }
+
+  for (let b = 0; b < batches.length; b++) {
+    const batch = batches[b];
+    showStatus("run", `Batch ${b + 1}/${batches.length}: ${phases.join(", ")}...`);
+
+    await processBatch(batch, phases);
+
+    // Short pause between batches to let Supabase breathe
+    if (b < batches.length - 1) await new Promise(r => setTimeout(r, 1000));
+  }
+
+  disableButtons(false);
+  showStatus("ok", `Done: ${Object.keys(state.entries).length} domains`);
+}
+
+async function processBatch(domains, phases) {
   const resp = await fetch(`${SURL.replace(/\/$/, "")}/functions/v1/process-entries`, {
     method: "POST",
     headers: { "Content-Type": "application/json", apikey: SKEY, Authorization: `Bearer ${SKEY}` },
@@ -112,13 +134,11 @@ async function run(phases) {
       if (line.startsWith("data: ")) handle(JSON.parse(line.slice(6)));
     }
   }
-  disableButtons(false);
-  showStatus("ok", "Done");
 }
 
 function handle(data) {
-  if (data.type === "done") { state.processing = false; return; }
-  if (data.type === "start") { state.total = data.total; updateCounter(); return; }
+  if (data.type === "done") return;
+  if (data.type === "start") return; // ignore batch-level start
 
   if (data.type === "result") {
     state.entries[data.domain] = data.entry;

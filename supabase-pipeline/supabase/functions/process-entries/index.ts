@@ -1,231 +1,250 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// ============================================================
-// Edge Function: process-entries
-// Оркестратор: для каждого домена из domain_list последовательно:
-//   1. CrUX rank + метрики
-//   2. Скриншот (если сайт и нет кэша)
-//   3. Оценка качества
-//   4. Сохранение в entries
-// ============================================================
-
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL") ?? "",
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
 );
-
 const daysThreshold = parseInt(Deno.env.get("DAYS_THRESHOLD") ?? "30");
+const PAGESPEED_API_KEY = Deno.env.get("PAGESPEED_API_KEY") ?? "";
 
-// Типы записей по ID
 function classifyEntry(id: string): "website" | "googleplay" | "appstore" {
   if (/^id\d+$/.test(id) || /^\d{6,}$/.test(id)) return "appstore";
   if (!id.includes(".")) return "googleplay";
-  // есть точка → проверяем, похоже ли на домен
   return "website";
 }
 
-// Оценка качества на основе CrUX
-function computeQuality(crux: any, hasScreenshot: boolean): { score: number; label: string } {
-  if (!crux?.present) {
-    return { score: 1, label: "unproven" };
-  }
+function computeTier(rank: number | null): string {
+  if (rank === null) return "E";
+  if (rank <= 1000) return "A";
+  if (rank <= 50000) return "B";
+  if (rank <= 500000) return "C";
+  return "D";
+}
 
-  let score = 5; // базовый балл за наличие в CrUX
-
-  // Ранг добавляет баллы
-  const tier = crux.tier ?? "E";
+function computeQuality(tier: string): { score: number; label: string } {
+  if (tier === "E") return { score: 1, label: "unproven" };
+  let score = 5;
   if (tier === "A") score += 3;
   else if (tier === "B") score += 2;
   else if (tier === "C") score += 1;
-
-  // Метрики
-  const m = crux.metrics;
-  if (m) {
-    if (m.lcp !== null && m.lcp > 4000) score -= 2;
-    if (m.cls !== null && m.cls > 0.25) score -= 1;
-    if (m.inp !== null && m.inp > 500) score -= 1;
-    if (m.hasDesktop) score += 1;
-  }
-
-  if (hasScreenshot) score += 1;
-
-  score = Math.max(0, Math.min(10, score));
-
-  let label = "ok";
-  if (score >= 8) label = "premium";
-  else if (score >= 5) label = "good";
-  else if (score >= 3) label = "low";
-  else label = "poor";
-
-  return { score, label };
+  const label = score >= 8 ? "premium" : score >= 5 ? "good" : score >= 3 ? "low" : "poor";
+  return { score: Math.min(10, Math.max(0, score)), label };
 }
 
-// Определение статуса удаления (как Get-RemoveStatusAndReason в parser.ps1)
-function computeRemoveStatus(qualityLabel: string, visits: string): { toRemove: boolean; reason: string } {
-  if (qualityLabel === "poor") return { toRemove: true, reason: "low quality" };
-  if (qualityLabel === "unproven" && (!visits || visits === "0")) {
-    return { toRemove: true, reason: "no data" };
-  }
-  return { toRemove: false, reason: "" };
-}
+function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
-// ----------------------------------------------------------------
-// Вызов другой Edge Function
-// ----------------------------------------------------------------
-async function callFunction(name: string, body: Record<string, any>) {
-  const projectRef = Deno.env.get("SUPABASE_URL")?.match(/https:\/\/(.+)\.supabase\.co/)?.[1] ?? "";
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
-
-  const url = `https://${projectRef}.supabase.co/functions/v1/${name}`;
-
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${anonKey}`,
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000),
-  });
-
-  return resp.json();
+// ============================================================
+// Phase 1: CrUX rank (DB query, instant)
+// ============================================================
+async function getCruxRank(domain: string): Promise<{ rankGlobal: number | null; rankRu: number | null; tier: string }> {
+  const { data: ranks } = await supabase.from("crux_ranks").select("scope, rank").eq("domain", domain);
+  const g = (ranks ?? []).find((r: any) => r.scope === "global")?.rank ?? null;
+  const ru = (ranks ?? []).find((r: any) => r.scope === "ru")?.rank ?? null;
+  const best = [g, ru].filter((r): r is number => r != null);
+  const tier = computeTier(best.length > 0 ? Math.min(...best) : null);
+  return { rankGlobal: g, rankRu: ru, tier };
 }
 
 // ============================================================
-// MAIN
+// Phase 2: Screenshot (PageSpeed API → Storage)
+// ============================================================
+async function getScreenshot(domain: string): Promise<string> {
+  const filename = `${domain}.png`;
+  const { data: existing } = await supabase.storage.from("screenshots").createSignedUrl(filename, 60);
+  if (existing?.signedUrl) return existing.signedUrl;
+
+  const params = new URLSearchParams({ url: `https://${domain}`, screenshot: "true", strategy: "desktop" });
+  if (PAGESPEED_API_KEY) params.set("key", PAGESPEED_API_KEY);
+
+  try {
+    const resp = await fetch(`https://www.googleapis.com/pagespeedonline/v5/runPagespeed?${params}`, {
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!resp.ok) return "";
+    const json = await resp.json();
+    const b64 = json?.lighthouseResult?.audits?.["final-screenshot"]?.details?.data;
+    if (!b64) return "";
+    const clean = b64.replace(/^data:image\/\w+;base64,/, "");
+    const binary = Uint8Array.from(atob(clean), c => c.charCodeAt(0));
+    await supabase.storage.from("screenshots").upload(filename, binary, { contentType: "image/png", upsert: true });
+    const { data: uploaded } = await supabase.storage.from("screenshots").createSignedUrl(filename, 60 * 60 * 24 * 365);
+    return uploaded?.signedUrl ?? "";
+  } catch { return ""; }
+}
+
+// ============================================================
+// Phase 3: Title & Description (fetch <head> only)
+// ============================================================
+async function getMeta(domain: string): Promise<{ name: string; description: string }> {
+  try {
+    const resp = await fetch(`https://${domain}`, {
+      signal: AbortSignal.timeout(10_000),
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; ParserBot/4.0)" },
+    });
+    if (!resp.ok) return { name: "", description: "" };
+    const html = await resp.text();
+    const ogTitle = html.match(/<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i);
+    const ogDesc = html.match(/<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i);
+    const mDesc = html.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i);
+    const title = html.match(/<title>([^<]+)<\/title>/i);
+    return {
+      name: (ogTitle?.[1] || title?.[1] || "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').trim(),
+      description: (ogDesc?.[1] || mDesc?.[1] || "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').trim(),
+    };
+  } catch { return { name: "", description: "" }; }
+}
+
+// ============================================================
+// Base entry builder (Phase 1 only)
+// ============================================================
+async function buildEntry(domain: string): Promise<any> {
+  const type = classifyEntry(domain);
+  const cached = await supabase.from("entries").select("*").eq("id", domain).maybeSingle();
+  const cache = cached?.data;
+
+  // Use cache if fresh
+  if (cache?.last_updated && cache.quality_score > 0) {
+    const daysSince = (Date.now() - new Date(cache.last_updated).getTime()) / 86_400_000;
+    if (daysSince <= daysThreshold) return { ...cache, _source: "cache" };
+  }
+
+  // Fresh: get CrUX rank
+  const { rankGlobal, rankRu, tier } = type === "website"
+    ? await getCruxRank(domain)
+    : { rankGlobal: null, rankRu: null, tier: "E" };
+
+  const quality = computeQuality(tier);
+  const toRemove = quality.label === "unproven" || quality.label === "poor";
+
+  const entry = {
+    id: domain,
+    name: cache?.name || "",
+    description: cache?.description || "",
+    entry_type: type,
+    screenshot_url: cache?.screenshot_url || "",
+    crux_present: (rankGlobal !== null || rankRu !== null),
+    crux_rank_global: rankGlobal,
+    crux_rank_ru: rankRu,
+    crux_tier: tier,
+    quality_score: quality.score,
+    quality_label: quality.label,
+    to_remove,
+    remove_reason: toRemove ? "low quality" : "",
+    last_updated: new Date().toISOString(),
+    _source: "fresh",
+  };
+
+  await supabase.rpc("upsert_entry", { data: entry });
+  return entry;
+}
+
+// ============================================================
+// SSE stream
 // ============================================================
 serve(async (req: Request) => {
-  try {
-    const body = await req.json().catch(() => ({}));
-    const limit = body.limit ?? 30;
-    const id = body.id ?? null;
-
-    let domains: { id: string }[];
-
-    if (id) {
-      domains = [{ id }];
-    } else {
-      // Берём все активные домены из domain_list
-      const { data } = await supabase
-        .from("domain_list")
-        .select("domain")
-        .eq("active", true)
-        .order("domain")
-        .limit(limit);
-
-      domains = (data ?? []).map((d) => ({ id: d.domain }));
-    }
-
-    const results: any[] = [];
-    let processed = 0;
-    let skipped = 0;
-
-    for (const { id: entryId } of domains) {
-      const type = classifyEntry(entryId);
-      console.log(`[${processed + skipped + 1}/${domains.length}] ${entryId} (${type})`);
-
-      // Проверяем, нужно ли обновлять
-      const { data: existing } = await supabase
-        .from("entries")
-        .select("last_updated, quality_score")
-        .eq("id", entryId)
-        .maybeSingle();
-
-      if (existing?.last_updated) {
-        const daysSince = (Date.now() - new Date(existing.last_updated).getTime()) / 86_400_000;
-        if (daysSince <= daysThreshold && existing.quality_score > 0) {
-          console.log(`  [SKIP] Updated ${daysSince.toFixed(0)} days ago`);
-          skipped++;
-          continue;
-        }
-      }
-
-      // === Шаг 1: CrUX rank + метрики ===
-      let crux = null;
-      if (type === "website") {
-        console.log(`  [CRUX] Fetching rank + metrics...`);
-        const cruxResp = await callFunction("crux-rank", { id: entryId });
-        crux = cruxResp?.result;
-      }
-
-      // === Шаг 2: Скриншот ===
-      let screenshotUrl = "";
-      let hasScreenshot = false;
-      if (type === "website") {
-        console.log(`  [SCREENSHOT] Fetching...`);
-        const ssResp = await callFunction("screenshot", { domain: entryId, id: entryId });
-        if (ssResp?.ok) {
-          screenshotUrl = ssResp.url ?? "";
-          hasScreenshot = !!screenshotUrl;
-          console.log(`  [SCREENSHOT] ${ssResp.cached ? "CACHED" : "NEW"}`);
-        }
-      }
-
-      // === Шаг 3: Оценка качества ===
-      const quality = computeQuality(crux, hasScreenshot);
-
-      // === Шаг 4: Сохранение ===
-      const { toRemove, reason } = computeRemoveStatus(quality.label, "");
-
-      const entry = {
-        id: entryId,
-        entry_type: type,
-        screenshot_url: screenshotUrl,
-        crux_present: crux?.present ?? false,
-        crux_rank_global: crux?.rankGlobal ?? null,
-        crux_rank_ru: crux?.rankRu ?? null,
-        crux_tier: crux?.tier ?? "E",
-        crux_lcp: crux?.metrics?.lcp ?? null,
-        crux_inp: crux?.metrics?.inp ?? null,
-        crux_cls: crux?.metrics?.cls ?? null,
-        crux_has_desktop: crux?.metrics?.hasDesktop ?? null,
-        crux_has_mobile: crux?.metrics?.hasMobile ?? null,
-        quality_score: quality.score,
-        quality_label: quality.label,
-        to_remove: toRemove,
-        remove_reason: reason,
-        last_updated: new Date().toISOString(),
-      };
-
-      const { error: saveErr } = await supabase.rpc("upsert_entry", {
-        data: entry,
-      });
-
-      if (saveErr) {
-        console.log(`  [ERROR] Save failed: ${saveErr.message}`);
-      } else {
-        console.log(`  [OK] Saved — tier ${crux?.tier ?? "E"}, score ${quality.score} (${quality.label})`);
-      }
-
-      results.push({ id: entryId, type, cruxTier: crux?.tier, qualityLabel: quality.label });
-
-      processed++;
-      await sleep(500); // небольшая пауза между доменами
-    }
-
-    return new Response(JSON.stringify({
-      ok: true,
-      total: domains.length,
-      processed,
-      skipped,
-      results,
-    }), { headers: ctype() });
-
-  } catch (e) {
-    return jsonErr(500, String(e));
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders() });
   }
+
+  const body = await req.json().catch(() => ({}));
+  const domains: string[] = (body.domains ?? []).map((d: string) => d.trim()).filter(Boolean);
+  const phases: string[] = body.phases ?? ["rank", "screenshot", "meta"];
+
+  if (domains.length === 0) {
+    return new Response(JSON.stringify({ error: "No domains" }), { status: 400, headers: jsonHeaders() });
+  }
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const encoder = new TextEncoder();
+      const send = (data: any) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+      const total = domains.length;
+
+      send({ type: "start", total, phases });
+
+      const entryMap: Record<string, any> = {};
+
+      // === PHASE 1: Rank (fast, sequential) ===
+      if (phases.includes("rank")) {
+        for (let i = 0; i < total; i++) {
+          const domain = domains[i];
+          const entry = await buildEntry(domain);
+          entryMap[domain] = entry;
+          entries.push(entry);
+          send({ type: "result", index: i, domain, entry, phase: "rank" });
+        }
+      } else {
+        // Need base entries for other phases
+        for (let i = 0; i < total; i++) {
+          const domain = domains[i];
+          const { data: cached } = await supabase.from("entries").select("*").eq("id", domain).maybeSingle();
+          if (cached) {
+            entryMap[domain] = cached;
+            entries.push(cached);
+            send({ type: "result", index: i, domain, entry: cached, phase: "base" });
+          } else {
+            const entry = await buildEntry(domain);
+            entryMap[domain] = entry;
+            entries.push(entry);
+            send({ type: "result", index: i, domain, entry, phase: "base" });
+          }
+        }
+      }
+
+      // === PHASE 2: Screenshots (parallel by 3) ===
+      if (phases.includes("screenshot")) {
+        const toShot = domains.map((d, i) => ({ domain: d, index: i }))
+          .filter(x => entryMap[x.domain] && entryMap[x.domain].crux_tier !== "E" && !entryMap[x.domain].screenshot_url);
+
+        const concurrency = 3;
+        for (let batch = 0; batch < toShot.length; batch += concurrency) {
+          const chunk = toShot.slice(batch, batch + concurrency);
+          await Promise.all(chunk.map(async ({ domain, index }) => {
+            const url = await getScreenshot(domain);
+            if (url) {
+              entryMap[domain].screenshot_url = url;
+              entries[index] = { ...entryMap[domain] };
+              send({ type: "result", index, domain, entry: entries[index], phase: "screenshot" });
+            }
+          }));
+          await sleep(500);
+        }
+      }
+
+      // === PHASE 3: Meta (parallel by 5) ===
+      if (phases.includes("meta")) {
+        const toMeta = domains.map((d, i) => ({ domain: d, index: i }))
+          .filter(x => entryMap[x.domain] && entryMap[x.domain].entry_type === "website" && (!entryMap[x.domain].name || !entryMap[x.domain].description));
+
+        const concurrency = 5;
+        for (let batch = 0; batch < toMeta.length; batch += concurrency) {
+          const chunk = toMeta.slice(batch, batch + concurrency);
+          await Promise.all(chunk.map(async ({ domain, index }) => {
+            const { name, description } = await getMeta(domain);
+            if (name || description) {
+              if (name) entryMap[domain].name = name;
+              if (description) entryMap[domain].description = description;
+              entries[index] = { ...entryMap[domain] };
+              send({ type: "result", index, domain, entry: entries[index], phase: "meta" });
+            }
+          }));
+          await sleep(300);
+        }
+      }
+
+      // Save all to DB
+      for (const e of entries) {
+        if (e) await supabase.rpc("upsert_entry", { data: e });
+      }
+
+      send({ type: "done" });
+      controller.close();
+    },
+  });
+
+  return new Response(stream, { headers: { "Content-Type": "text/event-stream", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-cache" } });
 });
 
-function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
-
-function ctype() {
-  return { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" };
-}
-
-function jsonErr(code: number, msg: string) {
-  return new Response(JSON.stringify({ error: true, code, message: msg }), {
-    status: code,
-    headers: ctype(),
-  });
-}
+function corsHeaders() { return { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey" }; }
+function jsonHeaders() { return { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }; }

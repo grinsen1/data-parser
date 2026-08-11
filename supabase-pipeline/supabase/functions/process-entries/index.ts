@@ -135,7 +135,6 @@ async function buildEntry(domain: string): Promise<any> {
     _source: "fresh",
   };
 
-  await supabase.rpc("upsert_entry", { data: entry });
   return entry;
 }
 
@@ -159,11 +158,14 @@ serve(async (req: Request) => {
     async start(controller) {
       const encoder = new TextEncoder();
       const send = (data: any) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
-      const total = domains.length;
 
-      send({ type: "start", total, phases });
+      try {
+        const total = domains.length;
 
-      const entryMap: Record<string, any> = {};
+        send({ type: "start", total, phases });
+
+        const entryMap: Record<string, any> = {};
+        const entries: any[] = [];
 
       // === PHASE 1: Rank (fast, sequential) ===
       if (phases.includes("rank")) {
@@ -239,6 +241,10 @@ serve(async (req: Request) => {
       }
 
       send({ type: "done" });
+      } catch (e) {
+        console.error("STREAM ERROR:", String(e));
+        send({ type: "error", error: String(e) });
+      }
       controller.close();
     },
   });

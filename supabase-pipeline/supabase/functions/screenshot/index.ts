@@ -34,33 +34,24 @@ serve(async (req: Request) => {
   const params = new URLSearchParams({ url: `https://${domain}`, screenshot: "true", strategy: "desktop" });
   if (PAGESPEED_API_KEY) params.set("key", PAGESPEED_API_KEY);
 
-  // Fetch PageSpeed screenshot and wait for result
-  try {
-    const resp = await fetch(
-      `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?${params}`,
-      { signal: AbortSignal.timeout(60_000) },
-    );
-    if (!resp.ok) return new Response(JSON.stringify({ ok: false, error: `PageSpeed ${resp.status}` }), {
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-    });
+  EdgeRuntime.waitUntil((async () => {
+    try {
+      const resp = await fetch(`https://www.googleapis.com/pagespeedonline/v5/runPagespeed?${params}`, {
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!resp.ok) return;
+      const json = await resp.json();
+      const b64 = json?.lighthouseResult?.audits?.["final-screenshot"]?.details?.data;
+      if (!b64) return;
+      const clean = b64.replace(/^data:image\/\w+;base64,/, "");
+      const binary = Uint8Array.from(atob(clean), c => c.charCodeAt(0));
+      await supabase.storage.from("screenshots").upload(filename, binary, {
+        contentType: "image/jpeg", upsert: true,
+      });
+    } catch { /* silent */ }
+  })());
 
-    const json = await resp.json();
-    const b64 = json?.lighthouseResult?.audits?.["final-screenshot"]?.details?.data;
-    if (!b64) return new Response(JSON.stringify({ ok: false, error: "no screenshot data" }), {
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-    });
-
-    const clean = b64.replace(/^data:image\/\w+;base64,/, "");
-    const binary = Uint8Array.from(atob(clean), c => c.charCodeAt(0));
-    await supabase.storage.from("screenshots").upload(filename, binary, { contentType: "image/jpeg", upsert: true });
-
-    const { data: uploaded } = await supabase.storage.from("screenshots").createSignedUrl(filename, 60 * 60 * 24 * 365);
-    return new Response(JSON.stringify({ ok: true, url: uploaded?.signedUrl ?? "", cached: false }), {
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-    });
-  } catch (e) {
-    return new Response(JSON.stringify({ ok: false, error: String(e) }), {
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-    });
-  }
+  return new Response(JSON.stringify({ ok: true, cached: false, pending: true }), {
+    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+  });
 });

@@ -8,15 +8,16 @@
 <style>
   *{box-sizing:border-box}
   body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d0d0e;color:#f5f5f5;padding:16px}
-  .container{max-width:1000px;margin:0 auto}
+  .container{max-width:1100px;margin:0 auto}
   h1{font-size:20px;margin:0 0 4px}
-  .sub{color:#9d9da3;margin:0 0 20px;font-size:13px}
+  .sub{color:#9d9da3;margin:0 0 16px;font-size:13px}
   .card{background:#19191b;border-radius:12px;padding:16px;margin-bottom:16px}
   textarea{width:100%;background:#242426;color:#f5f5f5;border:none;border-radius:8px;padding:12px;font-family:monospace;font-size:13px;resize:vertical}
-  button{padding:10px 20px;border-radius:8px;border:none;font-size:14px;cursor:pointer;font-weight:600}
-  button.primary{background:#f7bd19;color:#000}
+  button{padding:8px 16px;border-radius:8px;border:none;font-size:13px;cursor:pointer;font-weight:600}
+  .btn-primary{background:#f7bd19;color:#000}
+  .btn-secondary{background:#242426;color:#f5f5f5}
+  .btn-danger{background:#e53935;color:#fff}
   button:disabled{opacity:.4}
-  button.secondary{background:#242426;color:#f5f5f5;font-size:12px;padding:6px 12px}
   table{width:100%;border-collapse:collapse}
   th{text-align:left;color:#9d9da3;font-size:12px;padding:8px 6px;border-bottom:1px solid #2a2a2c}
   td{padding:8px 6px;border-bottom:1px solid #1a1a1c;font-size:13px;vertical-align:middle}
@@ -26,92 +27,75 @@
   .t-E{background:#424242;color:#9d9da3}
   .score{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600}
   .s-premium{background:#00c853;color:#000}.s-good{background:#64dd17;color:#000}
-  .s-low{background:#ffd600;color:#000}.s-poor{background:#e53935;color:#fff}
-  .s-unproven{background:#424242;color:#9d9da3}
+  .s-low{background:#ffd600;color:#000}.s-poor{background:#e53935;color:#fff}.s-unproven{background:#424242;color:#9d9da3}
   .rm-tag{padding:1px 5px;border-radius:4px;font-size:10px;background:#e53935;color:#fff}
   .ss-img{width:210px;height:126px;object-fit:cover;border-radius:6px;background:#242426}
-  .status{margin-top:12px;font-size:14px}
+  .status{margin-top:8px;font-size:13px}
   .st-ok{color:#64dd17}.st-err{color:#e53935}.st-run{color:#ffd600}
-  .hidden{display:none}
-  .empty{text-align:center;padding:40px;color:#9d9da3}
-  .header-row{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
-  .progress-bar{height:4px;background:#242426;border-radius:2px;margin-bottom:12px;overflow:hidden}
-  .progress-bar div{height:100%;background:#f7bd19;transition:width .3s}
-  .loading-dot{animation:blink 1s infinite}
-  @keyframes blink{50%{opacity:.2}}
+  .hidden{display:none}.empty{text-align:center;padding:40px;color:#9d9da3}
+  .hdr-row{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+  .btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center}
+  .dot{animation:blink 1s infinite}@keyframes blink{50%{opacity:.2}}
 </style>
 </head>
 <body>
 <div class="container">
   <h1>Domains Parser v4</h1>
-  <p class="sub">CrUX rank + screenshot + meta per task</p>
+  <p class="sub">CrUX rank + screenshot + title/description</p>
 
   <div class="card">
     <textarea id="domainInput" rows="6" placeholder="yandex.ru&#10;mail.ru&#10;avito.ru&#10;..."></textarea>
-    <div style="margin-top:12px;display:flex;align-items:center;gap:12px">
-      <button class="primary" id="btnProcess" onclick="process()">Process</button>
+    <div class="btn-row">
+      <button class="btn-primary" id="btnAll" onclick="run(['rank','screenshot','meta'])">All</button>
+      <button class="btn-secondary" onclick="run(['rank'])">Rank &amp; Score</button>
+      <button class="btn-secondary" onclick="run(['screenshot'])">Screenshots</button>
+      <button class="btn-secondary" onclick="run(['meta'])">Titles &amp; Desc</button>
       <span id="status" class="status hidden"></span>
     </div>
   </div>
 
   <div id="resultsPanel" class="card hidden" style="overflow-x:auto">
-    <div class="progress-bar"><div id="progress" style="width:0%"></div></div>
-    <div class="header-row" style="margin-bottom:12px">
+    <div class="hdr-row" style="margin-bottom:12px">
       <span style="color:#9d9da3;font-size:13px">
-        <span id="progressText">0/0</span>
-        (<span id="cacheCount" style="color:#64dd17">0</span> cached,
-         <span id="freshCount" style="color:#ffd600">0</span> fresh)
+        Results: <strong id="counter">0/0</strong>
+        (cached: <span id="cacheCount" style="color:#64dd17">0</span>,
+         fresh: <span id="freshCount" style="color:#ffd600">0</span>,
+         ss: <span id="ssCount" style="color:#2196f3">0</span>,
+         meta: <span id="metaCount" style="color:#9c27b0">0</span>)
       </span>
-      <button class="secondary" onclick="exportCSV()">Export CSV</button>
+      <button class="btn-secondary" onclick="exportCSV()">Export CSV</button>
     </div>
     <table>
-      <thead>
-        <tr>
-          <th>Domain</th>
-          <th>Name</th>
-          <th>Tier</th>
-          <th>Score</th>
-          <th>Screen</th>
-        </tr>
-      </thead>
+      <thead><tr>
+        <th>Domain</th><th>Name</th><th>Tier</th><th>Score</th><th>Screen</th>
+      </tr></thead>
       <tbody id="tableBody"></tbody>
     </table>
   </div>
 </div>
 
 <script>
-const SUPABASE_URL = "https://dcrmfvfuyexjdygbupwr.supabase.co/";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcm1mdmZ1eWV4amR5Z2J1cHdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0NjExNjYsImV4cCI6MjEwMjAzNzE2Nn0.lNe0cbwYq2yWV6tr__b6u5B9nZE2dgDk45j4KEoMhNI";
+const SURL = "https://dcrmfvfuyexjdygbupwr.supabase.co/";
+const SKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcm1mdmZ1eWV4amR5Z2J1cHdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0NjExNjYsImV4cCI6MjEwMjAzNzE2Nn0.lNe0cbwYq2yWV6tr__b6u5B9nZE2dgDk45j4KEoMhNI";
 
-let results = {};
-let lastResults = [];
-let processing = false;
+let state = { total: 0, entries: {}, counter: { rank: 0, screenshot: 0, meta: 0 }, processing: false };
 
-async function process() {
-  if (processing) return;
+async function run(phases) {
+  if (state.processing) return;
   const text = document.getElementById("domainInput").value.trim();
   if (!text) return;
+  const domains = text.split("\n").map(l => l.trim()).filter(Boolean);
 
-  processing = true;
-  results = {};
-  lastResults = [];
-  const btn = document.getElementById("btnProcess");
-  btn.disabled = true;
+  state = { total: domains.length, entries: {}, counter: { rank: 0, screenshot: 0, meta: 0 }, processing: true };
+  disableButtons(true);
   document.getElementById("resultsPanel").classList.remove("hidden");
   document.getElementById("tableBody").innerHTML = "";
-  showStatus("run", "Streaming...");
+  showStatus("run", `Running: ${phases.join(", ")}...`);
 
-  const domains = text.split("\n").map(l => l.trim()).filter(Boolean);
-  const baseUrl = SUPABASE_URL.replace(/\/$/, "");
-
-  const resp = await fetch(`${baseUrl}/functions/v1/process-entries`, {
+  const resp = await fetch(`${SURL.replace(/\/$/, "")}/functions/v1/process-entries`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    },
-    body: JSON.stringify({ domains }),
+    headers: { "Content-Type": "application/json", apikey: SKEY, Authorization: `Bearer ${SKEY}` },
+    body: JSON.stringify({ domains, phases }),
   });
 
   const reader = resp.body.getReader();
@@ -122,76 +106,55 @@ async function process() {
     const { done, value } = await reader.read();
     if (done) break;
     buf += decoder.decode(value, { stream: true });
-
     const lines = buf.split("\n");
     buf = lines.pop() || "";
-
     for (const line of lines) {
-      if (line.startsWith("data: ")) {
-        const data = JSON.parse(line.slice(6));
-        handleSSE(data);
-      }
+      if (line.startsWith("data: ")) handle(JSON.parse(line.slice(6)));
     }
+  }
+  disableButtons(false);
+  showStatus("ok", "Done");
+}
+
+function handle(data) {
+  if (data.type === "done") { state.processing = false; return; }
+  if (data.type === "start") { state.total = data.total; updateCounter(); return; }
+
+  if (data.type === "result") {
+    state.entries[data.domain] = data.entry;
+    if (data.phase === "rank" || data.phase === "base") state.counter.rank++;
+    else if (data.phase === "screenshot") state.counter.screenshot++;
+    else if (data.phase === "meta") state.counter.meta++;
+    rerender();
   }
 }
 
-function handleSSE(data) {
-  if (data.type === "start") {
-    document.getElementById("progressText").textContent = `0/${data.total}`;
-  }
-
-  if (data.type === "result") {
-    const e = data.entry;
-    e._domain = data.domain;
-    e._index = data.index;
-    e._phase = data.phase;
-    results[data.domain] = e;
-    rerender();
-  }
-
-  if (data.type === "done") {
-    processing = false;
-    document.getElementById("btnProcess").disabled = false;
-    const total = Object.keys(results).length;
-    const cached = Object.values(results).filter(r => r._source === "cache").length;
-    document.getElementById("cacheCount").textContent = cached;
-    document.getElementById("freshCount").textContent = total - cached;
-    showStatus("ok", `Done: ${total} total`);
-    document.getElementById("progressText").textContent = `${total}/${total}`;
-  }
+function updateCounter() {
+  document.getElementById("counter").textContent = `${Object.keys(state.entries).length}/${state.total}`;
+  document.getElementById("cacheCount").textContent = Object.values(state.entries).filter(e => e._source === "cache").length;
+  document.getElementById("freshCount").textContent = Object.values(state.entries).filter(e => e._source === "fresh").length;
+  document.getElementById("ssCount").textContent = state.counter.screenshot;
+  document.getElementById("metaCount").textContent = state.counter.meta;
 }
 
 function rerender() {
-  const entries = Object.values(results).sort((a, b) => a._index - b._index);
-  lastResults = entries;
-
-  const total = entries.length;
-  const max = entries[entries.length - 1]?._index + 1 || total;
-  document.getElementById("progress").style.width = `${total / max * 100}%`;
-
-  // Count by source
-  const cached = entries.filter(r => r._source === "cache").length;
-  document.getElementById("cacheCount").textContent = cached;
-  document.getElementById("freshCount").textContent = total - cached;
-  document.getElementById("progressText").textContent = `${total}/${max}`;
+  updateCounter();
+  const arr = Object.values(state.entries).sort((a, b) => (a._idx ?? 999) - (b._idx ?? 999));
+  // Add index for sorting
+  Object.keys(state.entries).forEach((k, i) => { if (state.entries[k]._idx === undefined) state.entries[k]._idx = i; });
 
   const tbody = document.getElementById("tableBody");
-  tbody.innerHTML = entries.map((r) => {
+  tbody.innerHTML = arr.map(r => {
     const tier = r.crux_tier ?? "E";
     const score = r.quality_score ?? 0;
     const label = r.quality_label ?? "unproven";
     const rm = r.to_remove ? `<span class="rm-tag">del</span>` : "";
-    const name = (r.name || "-").substring(0, 35);
-    const desc = (r.description || "").substring(0, 70);
-    const loading = !r._enriched && r._source === "fresh" && tier !== "E"
-      ? ` <span class="loading-dot" style="color:#ffd600">...</span>`
-      : "";
-    const ss = r.screenshot_url
-      ? `<a href="${r.screenshot_url}" target="_blank"><img class="ss-img" src="${r.screenshot_url}" alt=""></a>`
-      : "";
-
+    const name = (r.name || "-").substring(0, 30);
+    const desc = (r.description || "").substring(0, 60);
+    const ss = r.screenshot_url ? `<a href="${r.screenshot_url}" target="_blank"><img class="ss-img" src="${r.screenshot_url}" alt=""></a>` : "";
+    const metaLoading = r.entry_type === "website" && !r.name && !state.processingDone ? "" : "";
     return `<tr>
-      <td><strong>${r.id}</strong> ${rm}${loading}<br><span style="color:#9d9da3;font-size:11px">${desc}</span></td>
+      <td><strong>${r.id}</strong> ${rm}<br><span style="color:#9d9da3;font-size:11px">${desc}${metaLoading}</span></td>
       <td>${name}</td>
       <td><span class="tier t-${tier}">${tier}</span></td>
       <td><span class="score s-${label}">${score} ${label}</span></td>
@@ -201,25 +164,27 @@ function rerender() {
 }
 
 function exportCSV() {
-  if (!lastResults.length) return;
+  const arr = Object.values(state.entries);
+  if (!arr.length) return;
   const h = "domain,name,description,tier,rank_global,rank_ru,score,label,screenshot_url";
-  const rows = lastResults.map((r) =>
-    [r.id, r.name, r.description, r.crux_tier, r.crux_rank_global, r.crux_rank_ru, r.quality_score, r.quality_label, r.screenshot_url].map(v => `"${String(v || "").replace(/"/g, '""')}"`).join(",")
-  );
+  const rows = arr.map(r => [r.id, r.name, r.description, r.crux_tier, r.crux_rank_global, r.crux_rank_ru, r.quality_score, r.quality_label, r.screenshot_url].map(v => `"${String(v || "").replace(/"/g, '""')}"`).join(","));
   const csv = h + "\n" + rows.join("\n");
-  const blob = new Blob([csv], { type: "text/csv" });
+  const b = new Blob([csv], { type: "text/csv" });
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `domains_report_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.href = URL.createObjectURL(b);
+  a.download = `report_${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
+}
+
+function disableButtons(v) {
+  document.querySelectorAll(".btn-row button").forEach(b => b.disabled = v);
 }
 
 function showStatus(type, text) {
   const el = document.getElementById("status");
-  el.className = `status st-${type === "running" || type === "run" ? "run" : type}`;
+  el.className = `status st-${type === "run" ? "run" : type}`;
   el.textContent = text;
   el.classList.remove("hidden");
-  if (type === "ok") setTimeout(() => el.classList.add("hidden"), 6000);
 }
 </script>
 </body>

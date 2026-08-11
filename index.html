@@ -153,7 +153,7 @@ function handleSSE(data) {
     processing = false;
     document.getElementById("btnProcess").disabled = false;
     const total = Object.keys(results).length;
-    const cached = Object.values(results).filter((r: any) => r._source === "cache").length;
+    const cached = Object.values(results).filter(r => r._source === "cache").length;
     document.getElementById("cacheCount").textContent = cached;
     document.getElementById("freshCount").textContent = total - cached;
     showStatus("ok", `Done: ${total} total`);
@@ -162,7 +162,7 @@ function handleSSE(data) {
 }
 
 function rerender() {
-  const entries = Object.values(results).sort((a: any, b: any) => a._index - b._index);
+  const entries = Object.values(results).sort((a, b) => a._index - b._index);
   lastResults = entries;
 
   const total = entries.length;
@@ -170,13 +170,13 @@ function rerender() {
   document.getElementById("progress").style.width = `${total / max * 100}%`;
 
   // Count by source
-  const cached = entries.filter((r: any) => r._source === "cache").length;
+  const cached = entries.filter(r => r._source === "cache").length;
   document.getElementById("cacheCount").textContent = cached;
   document.getElementById("freshCount").textContent = total - cached;
   document.getElementById("progressText").textContent = `${total}/${max}`;
 
   const tbody = document.getElementById("tableBody");
-  tbody.innerHTML = entries.map((r: any) => {
+  tbody.innerHTML = entries.map((r) => {
     const tier = r.crux_tier ?? "E";
     const score = r.quality_score ?? 0;
     const label = r.quality_label ?? "unproven";
@@ -203,7 +203,7 @@ function rerender() {
 function exportCSV() {
   if (!lastResults.length) return;
   const h = "domain,name,description,tier,rank_global,rank_ru,score,label,screenshot_url";
-  const rows = lastResults.map((r: any) =>
+  const rows = lastResults.map((r) =>
     [r.id, r.name, r.description, r.crux_tier, r.crux_rank_global, r.crux_rank_ru, r.quality_score, r.quality_label, r.screenshot_url].map(v => `"${String(v || "").replace(/"/g, '""')}"`).join(",")
   );
   const csv = h + "\n" + rows.join("\n");

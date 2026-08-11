@@ -8,40 +8,44 @@
 <style>
   *{box-sizing:border-box}
   body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d0d0e;color:#f5f5f5;padding:16px}
-  .container{max-width:900px;margin:0 auto}
+  .container{max-width:1000px;margin:0 auto}
   h1{font-size:20px;margin:0 0 4px}
   .sub{color:#9d9da3;margin:0 0 20px;font-size:13px}
   .card{background:#19191b;border-radius:12px;padding:16px;margin-bottom:16px}
   textarea{width:100%;background:#242426;color:#f5f5f5;border:none;border-radius:8px;padding:12px;font-family:monospace;font-size:13px;resize:vertical}
   button{padding:10px 20px;border-radius:8px;border:none;font-size:14px;cursor:pointer;font-weight:600}
   button.primary{background:#f7bd19;color:#000}
-  button:disabled{opacity:.4;cursor:default}
+  button:disabled{opacity:.4}
   button.secondary{background:#242426;color:#f5f5f5;font-size:12px;padding:6px 12px}
   table{width:100%;border-collapse:collapse}
   th{text-align:left;color:#9d9da3;font-size:12px;padding:8px 6px;border-bottom:1px solid #2a2a2c}
-  td{padding:8px 6px;border-bottom:1px solid #1a1a1c;font-size:13px}
-  .tier{display:inline-block;width:28px;height:28px;line-height:28px;text-align:center;border-radius:6px;font-weight:700;font-size:13px}
-  .tier-A{background:#00c853;color:#000}.tier-B{background:#64dd17;color:#000}
-  .tier-C{background:#ffd600;color:#000}.tier-D{background:#ff9100;color:#000}
-  .tier-E{background:#424242;color:#9d9da3}
-  .score{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:600}
+  td{padding:8px 6px;border-bottom:1px solid #1a1a1c;font-size:13px;vertical-align:middle}
+  .tier{display:inline-block;width:26px;height:26px;line-height:26px;text-align:center;border-radius:6px;font-weight:700;font-size:12px}
+  .t-A{background:#00c853;color:#000}.t-B{background:#64dd17;color:#000}
+  .t-C{background:#ffd600;color:#000}.t-D{background:#ff9100;color:#000}
+  .t-E{background:#424242;color:#9d9da3}
+  .score{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600}
   .s-premium{background:#00c853;color:#000}.s-good{background:#64dd17;color:#000}
   .s-low{background:#ffd600;color:#000}.s-poor{background:#e53935;color:#fff}
   .s-unproven{background:#424242;color:#9d9da3}
-  .rm-tag{display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;background:#e53935;color:#fff}
+  .rm-tag{padding:1px 5px;border-radius:4px;font-size:10px;background:#e53935;color:#fff}
+  .ss-img{width:70px;height:42px;object-fit:cover;border-radius:4px;background:#242426}
   .status{margin-top:12px;font-size:14px}
-  .status.ok{color:#64dd17}.status.err{color:#e53935}.status.running{color:#ffd600}
+  .st-ok{color:#64dd17}.st-err{color:#e53935}.st-run{color:#ffd600}
   .hidden{display:none}
   .empty{text-align:center;padding:40px;color:#9d9da3}
   .header-row{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+  .progress-bar{height:4px;background:#242426;border-radius:2px;margin-bottom:12px;overflow:hidden}
+  .progress-bar div{height:100%;background:#f7bd19;transition:width .3s}
+  .loading-dot{animation:blink 1s infinite}
+  @keyframes blink{50%{opacity:.2}}
 </style>
 </head>
 <body>
 <div class="container">
   <h1>Domains Parser v4</h1>
-  <p class="sub">CrUX rank + quality score per task</p>
+  <p class="sub">CrUX rank + screenshot + meta per task</p>
 
-  <!-- INPUT -->
   <div class="card">
     <textarea id="domainInput" rows="6" placeholder="yandex.ru&#10;mail.ru&#10;avito.ru&#10;..."></textarea>
     <div style="margin-top:12px;display:flex;align-items:center;gap:12px">
@@ -50,13 +54,13 @@
     </div>
   </div>
 
-  <!-- RESULTS -->
-  <div class="card" style="overflow-x:auto">
+  <div id="resultsPanel" class="card hidden" style="overflow-x:auto">
+    <div class="progress-bar"><div id="progress" style="width:0%"></div></div>
     <div class="header-row" style="margin-bottom:12px">
       <span style="color:#9d9da3;font-size:13px">
-        Results: <strong id="resultCount">0</strong>
-        (<span id="cacheInfo" style="color:#64dd17">0 cached</span>,
-         <span id="freshInfo" style="color:#ffd600">0 fresh</span>)
+        <span id="progressText">0/0</span>
+        (<span id="cacheCount" style="color:#64dd17">0</span> cached,
+         <span id="freshCount" style="color:#ffd600">0</span> fresh)
       </span>
       <button class="secondary" onclick="exportCSV()">Export CSV</button>
     </div>
@@ -72,7 +76,6 @@
       </thead>
       <tbody id="tableBody"></tbody>
     </table>
-    <div id="emptyState" class="empty hidden">Paste domains above and click Process</div>
   </div>
 </div>
 
@@ -80,6 +83,7 @@
 const SUPABASE_URL = "https://dcrmfvfuyexjdygbupwr.supabase.co/";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcm1mdmZ1eWV4amR5Z2J1cHdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0NjExNjYsImV4cCI6MjEwMjAzNzE2Nn0.lNe0cbwYq2yWV6tr__b6u5B9nZE2dgDk45j4KEoMhNI";
 
+let results = {};
 let lastResults = [];
 let processing = false;
 
@@ -89,68 +93,107 @@ async function process() {
   if (!text) return;
 
   processing = true;
+  results = {};
+  lastResults = [];
   const btn = document.getElementById("btnProcess");
   btn.disabled = true;
-  showStatus("running", "Processing...");
+  document.getElementById("resultsPanel").classList.remove("hidden");
+  document.getElementById("tableBody").innerHTML = "";
+  showStatus("run", "Streaming...");
 
   const domains = text.split("\n").map(l => l.trim()).filter(Boolean);
   const baseUrl = SUPABASE_URL.replace(/\/$/, "");
 
-  try {
-    const resp = await fetch(`${baseUrl}/functions/v1/process-entries`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      },
-      body: JSON.stringify({ domains }),
-    });
+  const resp = await fetch(`${baseUrl}/functions/v1/process-entries`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    },
+    body: JSON.stringify({ domains }),
+  });
 
-    const result = await resp.json();
-    if (result.error) throw new Error(result.error);
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
 
-    lastResults = result.results ?? [];
-    document.getElementById("resultCount").textContent = lastResults.length;
-    document.getElementById("cacheInfo").textContent = `${result.fromCache ?? 0} cached`;
-    document.getElementById("freshInfo").textContent = `${result.fresh ?? 0} fresh`;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
 
-    renderTable(lastResults);
-    showStatus("ok", `Done: ${result.total} total, ${result.fromCache} cached, ${result.fresh} fresh`);
-  } catch (e) {
-    showStatus("err", "Error: " + e.message);
-  } finally {
-    processing = false;
-    btn.disabled = false;
+    const lines = buf.split("\n");
+    buf = lines.pop() || "";
+
+    for (const line of lines) {
+      if (line.startsWith("data: ")) {
+        const data = JSON.parse(line.slice(6));
+        handleSSE(data);
+      }
+    }
   }
 }
 
-function renderTable(results) {
-  const tbody = document.getElementById("tableBody");
-  const empty = document.getElementById("emptyState");
-
-  if (!results.length) {
-    tbody.innerHTML = "";
-    empty.classList.remove("hidden");
-    return;
+function handleSSE(data) {
+  if (data.type === "start") {
+    document.getElementById("progressText").textContent = `0/${data.total}`;
   }
-  empty.classList.add("hidden");
 
-  tbody.innerHTML = results.map(r => {
+  if (data.type === "result") {
+    const e = data.entry;
+    e._domain = data.domain;
+    e._index = data.index;
+    e._phase = data.phase;
+    results[data.domain] = e;
+    rerender();
+  }
+
+  if (data.type === "done") {
+    processing = false;
+    document.getElementById("btnProcess").disabled = false;
+    const total = Object.keys(results).length;
+    const cached = Object.values(results).filter((r: any) => r._source === "cache").length;
+    document.getElementById("cacheCount").textContent = cached;
+    document.getElementById("freshCount").textContent = total - cached;
+    showStatus("ok", `Done: ${total} total`);
+    document.getElementById("progressText").textContent = `${total}/${total}`;
+  }
+}
+
+function rerender() {
+  const entries = Object.values(results).sort((a: any, b: any) => a._index - b._index);
+  lastResults = entries;
+
+  const total = entries.length;
+  const max = entries[entries.length - 1]?._index + 1 || total;
+  document.getElementById("progress").style.width = `${total / max * 100}%`;
+
+  // Count by source
+  const cached = entries.filter((r: any) => r._source === "cache").length;
+  document.getElementById("cacheCount").textContent = cached;
+  document.getElementById("freshCount").textContent = total - cached;
+  document.getElementById("progressText").textContent = `${total}/${max}`;
+
+  const tbody = document.getElementById("tableBody");
+  tbody.innerHTML = entries.map((r: any) => {
     const tier = r.crux_tier ?? "E";
     const score = r.quality_score ?? 0;
     const label = r.quality_label ?? "unproven";
     const rm = r.to_remove ? `<span class="rm-tag">del</span>` : "";
-    const name = (r.name || r.id).substring(0, 40);
-    const desc = (r.description || "").substring(0, 80);
+    const name = (r.name || "-").substring(0, 35);
+    const desc = (r.description || "").substring(0, 70);
+    const loading = !r._enriched && r._source === "fresh" && tier !== "E"
+      ? ` <span class="loading-dot" style="color:#ffd600">...</span>`
+      : "";
     const ss = r.screenshot_url
-      ? `<a href="${r.screenshot_url}" target="_blank"><img src="${r.screenshot_url}" style="width:80px;height:50px;object-fit:cover;border-radius:4px" alt=""></a>`
-      : "-";
+      ? `<a href="${r.screenshot_url}" target="_blank"><img class="ss-img" src="${r.screenshot_url}" alt=""></a>`
+      : "";
 
     return `<tr>
-      <td><strong>${r.id}</strong> ${rm}<br><span style="color:#9d9da3;font-size:11px">${desc}</span></td>
-      <td>${name || "-"}</td>
-      <td><span class="tier tier-${tier}">${tier}</span></td>
+      <td><strong>${r.id}</strong> ${rm}${loading}<br><span style="color:#9d9da3;font-size:11px">${desc}</span></td>
+      <td>${name}</td>
+      <td><span class="tier t-${tier}">${tier}</span></td>
       <td><span class="score s-${label}">${score} ${label}</span></td>
       <td>${ss}</td>
     </tr>`;
@@ -159,24 +202,24 @@ function renderTable(results) {
 
 function exportCSV() {
   if (!lastResults.length) return;
-  const header = "domain,type,tier,rank_global,rank_ru,score,label,to_remove";
-  const rows = lastResults.map(r =>
-    [r.id, r.entry_type, r.crux_tier, r.crux_rank_global, r.crux_rank_ru, r.quality_score, r.quality_label, r.to_remove].join(",")
+  const h = "domain,name,description,tier,rank_global,rank_ru,score,label,screenshot_url";
+  const rows = lastResults.map((r: any) =>
+    [r.id, r.name, r.description, r.crux_tier, r.crux_rank_global, r.crux_rank_ru, r.quality_score, r.quality_label, r.screenshot_url].map(v => `"${String(v || "").replace(/"/g, '""')}"`).join(",")
   );
-  const csv = header + "\n" + rows.join("\n");
+  const csv = h + "\n" + rows.join("\n");
   const blob = new Blob([csv], { type: "text/csv" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "domains_report.csv";
+  a.download = `domains_report_${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
 }
 
 function showStatus(type, text) {
   const el = document.getElementById("status");
-  el.className = `status ${type}`;
+  el.className = `status st-${type === "running" || type === "run" ? "run" : type}`;
   el.textContent = text;
   el.classList.remove("hidden");
-  if (type === "ok") setTimeout(() => el.classList.add("hidden"), 8000);
+  if (type === "ok") setTimeout(() => el.classList.add("hidden"), 6000);
 }
 </script>
 </body>

@@ -36,6 +36,11 @@
   .hdr-row{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
   .btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center}
   .dot{animation:blink 1s infinite}@keyframes blink{50%{opacity:.2}}
+  .log-panel{background:#0d0d0e;border-radius:8px;padding:12px;max-height:200px;overflow-y:auto;font-family:monospace;font-size:11px;margin-top:8px}
+  .log-line{margin:1px 0;word-break:break-all}
+  .log-err{color:#e53935}.log-warn{color:#ffd600}.log-info{color:#9d9da3}.log-ok{color:#64dd17}
+  .log-btn-row{display:flex;gap:6px;margin-bottom:8px}
+  .log-btn-row button{font-size:11px;padding:4px 10px}
 </style>
 </head>
 <body>
@@ -88,51 +93,104 @@ async function run(phases) {
   const allDomains = text.split("\n").map(l => l.trim()).filter(Boolean);
 
   state = { total: allDomains.length, entries: {}, counter: { rank: 0, screenshot: 0, meta: 0 }, processing: true, _idx: 0 };
-  disableButtons(true);
   document.getElementById("resultsPanel").classList.remove("hidden");
   document.getElementById("tableBody").innerHTML = "";
-  updateCounter();
+  disableButtons(true);
 
-  // Split into batches
-  const batches = [];
+  // Split into initial batches
+  const queue = [];
   for (let i = 0; i < allDomains.length; i += BATCH_SIZE) {
-    batches.push(allDomains.slice(i, i + BATCH_SIZE));
+    queue.push({ domains: allDomains.slice(i, i + BATCH_SIZE), size: BATCH_SIZE, retries: 0 });
   }
 
-  for (let b = 0; b < batches.length; b++) {
-    const batch = batches[b];
-    showStatus("run", `Batch ${b + 1}/${batches.length}: ${phases.join(", ")}...`);
+  let batchNo = 0;
+  while (queue.length > 0) {
+    batchNo++;
+    const item = queue.shift();
+    showStatus("run", `Batch ${batchNo} (${item.domains.length} domains, s=${item.size}): ${phases.join(", ")}...`);
+    updateCounter();
 
-    await processBatch(batch, phases);
+    const success = await processBatchWithTimeout(item.domains, phases);
 
-    // Short pause between batches to let Supabase breathe
-    if (b < batches.length - 1) await new Promise(r => setTimeout(r, 1000));
+    if (!success) {
+      // Timeout — only retry domains without results yet
+      const remaining = item.domains.filter(d => !state.entries[d]);
+      if (remaining.length === 0) continue; // all processed despite timeout
+
+      const half = Math.max(2, Math.floor(item.size / 2));
+      // Split remaining into two
+      const mid = Math.ceil(remaining.length / 2);
+      const a = remaining.slice(0, mid);
+      const b = remaining.slice(mid);
+      if (b.length) queue.unshift({ domains: b, size: half, retries: 0 });
+      if (a.length) queue.unshift({ domains: a, size: half, retries: 0 });
+      showStatus("run", `Timeout: ${domains.length - remaining.length} done, ${remaining.length} retrying (s=${half})...`);
+    }
   }
 
   disableButtons(false);
   showStatus("ok", `Done: ${Object.keys(state.entries).length} domains`);
 }
 
-async function processBatch(domains, phases) {
-  const resp = await fetch(`${SURL.replace(/\/$/, "")}/functions/v1/process-entries`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", apikey: SKEY, Authorization: `Bearer ${SKEY}` },
-    body: JSON.stringify({ domains, phases }),
-  });
+async function processBatchWithTimeout(domains, phases) {
+  const timeoutMs = 9000; // Edge Function kills at 10s, warn at 9s
+  let gotDone = false;
+  let lastEventTime = Date.now();
 
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
+  try {
+    const resp = await fetch(`${SURL.replace(/\/$/, "")}/functions/v1/process-entries`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: SKEY, Authorization: `Bearer ${SKEY}` },
+      body: JSON.stringify({ domains, phases }),
+    });
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const lines = buf.split("\n");
-    buf = lines.pop() || "";
-    for (const line of lines) {
-      if (line.startsWith("data: ")) handle(JSON.parse(line.slice(6)));
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    while (true) {
+      const { done, value } = await raceWithTimeout(reader.read(), 12000);
+
+      if (done) break;
+
+      if (value) {
+        lastEventTime = Date.now();
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = JSON.parse(line.slice(6));
+            if (data.type === "done") gotDone = true;
+            handle(data);
+          }
+        }
+      }
+
+      // Check if we're approaching timeout
+      if (Date.now() - lastEventTime > 5000) {
+        reader.cancel();
+        return gotDone;
+      }
     }
+
+    return gotDone;
+  } catch (e) {
+    console.log("Batch error:", e);
+    // Check which domains in this batch already got results
+    const remaining = domains.filter(d => !state.entries[d]);
+    if (remaining.length === 0) return true; // all done despite error
+    return false; // need retry
+  }
+}
+
+async function raceWithTimeout(promise, ms) {
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("TIMEOUT")), ms));
+  try {
+    return await Promise.race([promise, timeout]);
+  } catch (e) {
+    if (e.message === "TIMEOUT") return { done: true, value: null };
+    throw e;
   }
 }
 

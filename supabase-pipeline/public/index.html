@@ -41,20 +41,22 @@
   .log-err{color:#e53935}.log-warn{color:#ffd600}.log-info{color:#9d9da3}.log-ok{color:#64dd17}
   .log-btn-row{display:flex;gap:6px;margin-bottom:8px}
   .log-btn-row button{font-size:11px;padding:4px 10px}
+  .badge{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;margin-left:4px}
+  .b-ok{background:#64dd17;color:#000}.b-run{background:#ffd600;color:#000}.b-err{background:#e53935;color:#fff}
 </style>
 </head>
 <body>
 <div class="container">
   <h1>Domains Parser v4</h1>
-  <p class="sub">CrUX rank + screenshot + title/description</p>
+  <p class="sub">CrUX rank + screenshot (PageSpeed, fire & poll) + title/description</p>
 
   <div class="card">
     <textarea id="domainInput" rows="6" placeholder="yandex.ru&#10;mail.ru&#10;avito.ru&#10;..."></textarea>
     <div class="btn-row">
-      <button class="btn-primary" id="btnAll" onclick="run(['rank','screenshot','meta'])">All</button>
-      <button class="btn-secondary" onclick="run(['rank'])">Rank &amp; Score</button>
-      <button class="btn-secondary" onclick="run(['screenshot'])">Screenshots</button>
-      <button class="btn-secondary" onclick="run(['meta'])">Titles &amp; Desc</button>
+      <button class="btn-primary" id="btnAll" onclick="runAll()">All</button>
+      <button class="btn-secondary" onclick="runRank()">Rank &amp; Score</button>
+      <button class="btn-secondary" onclick="runScreenshots()">Screenshots</button>
+      <button class="btn-secondary" onclick="runMeta()">Titles &amp; Desc</button>
       <span id="status" class="status hidden"></span>
     </div>
   </div>
@@ -64,7 +66,6 @@
       <span style="color:#9d9da3;font-size:13px">
         Results: <strong id="counter">0/0</strong>
         (cached: <span id="cacheCount" style="color:#64dd17">0</span>,
-         fresh: <span id="freshCount" style="color:#ffd600">0</span>,
          ss: <span id="ssCount" style="color:#2196f3">0</span>,
          meta: <span id="metaCount" style="color:#9c27b0">0</span>)
       </span>
@@ -93,196 +94,77 @@
 const SURL = "https://dcrmfvfuyexjdygbupwr.supabase.co/";
 const SKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcm1mdmZ1eWV4amR5Z2J1cHdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0NjExNjYsImV4cCI6MjEwMjAzNzE2Nn0.lNe0cbwYq2yWV6tr__b6u5B9nZE2dgDk45j4KEoMhNI";
 
-const log = { lines: [], errs: 0, warns: 0 };
+const R = {}; // global results { domain: entry }
+let domains = [];
+let busy = false;
 
+function hdr() { return { "Content-Type": "application/json", apikey: SKEY, Authorization: `Bearer ${SKEY}` }; }
+
+// === LOGGING ===
+const log = { lines: [], errs: 0, warns: 0 };
 function logLine(text, type) {
   const t = new Date().toLocaleTimeString();
-  const entry = { time: t, text, type };
-  log.lines.push(entry);
+  log.lines.push({ time: t, text, type });
   if (type === "err") log.errs++;
   if (type === "warn") log.warns++;
-
-  const el = document.getElementById("logPanel");
-  const div = document.createElement("div");
+  const el = document.getElementById("logPanel"), div = document.createElement("div");
   div.className = `log-line log-${type}`;
   div.textContent = `[${t}] ${text}`;
   el.appendChild(div);
   el.scrollTop = el.scrollHeight;
   document.getElementById("logSummary").textContent = `${log.errs} errors, ${log.warns} warnings`;
 }
-
 function copyLog() {
-  const text = log.lines.map(l => `[${l.time}] [${l.type}] ${l.text}`).join("\n");
-  navigator.clipboard.writeText(text).then(() => logLine("Log copied to clipboard", "ok"));
+  const t = log.lines.map(l => `[${l.time}] [${l.type}] ${l.text}`).join("\n");
+  navigator.clipboard.writeText(t).then(() => logLine("Log copied", "ok"));
 }
-
 function clearLog() {
   log.lines = []; log.errs = 0; log.warns = 0;
   document.getElementById("logPanel").innerHTML = "";
   document.getElementById("logSummary").textContent = "";
-}let state = { total: 0, entries: {}, counter: { rank: 0, screenshot: 0, meta: 0 }, processing: false, _idx: 0 };
-const BATCH_SIZE = 30;
-
-async function run(phases) {
-  if (state.processing) return;
-  const text = document.getElementById("domainInput").value.trim();
-  if (!text) return;
-  const allDomains = text.split("\n").map(l => l.trim()).filter(Boolean);
-
-  state = { total: allDomains.length, entries: {}, counter: { rank: 0, screenshot: 0, meta: 0 }, processing: true, _idx: 0 };
-  logLine(`START: ${allDomains.length} domains, phases=[${phases.join(",")}], batch=${BATCH_SIZE}`, "info");
-  document.getElementById("resultsPanel").classList.remove("hidden");
-  document.getElementById("tableBody").innerHTML = "";
-  disableButtons(true);
-
-  // Split into initial batches
-  const queue = [];
-  for (let i = 0; i < allDomains.length; i += BATCH_SIZE) {
-    queue.push({ domains: allDomains.slice(i, i + BATCH_SIZE), size: BATCH_SIZE, retries: 0 });
-  }
-
-  let batchNo = 0;
-  while (queue.length > 0) {
-    batchNo++;
-    const item = queue.shift();
-    showStatus("run", `Batch ${batchNo} (${item.domains.length} domains, s=${item.size}): ${phases.join(", ")}...`);
-    logLine(`Batch #${batchNo}: ${item.domains.length} domains, size=${item.size}, phases=[${phases.join(",")}]`, "info");
-    updateCounter();
-
-    const success = await processBatchWithTimeout(item.domains, phases);
-
-    if (!success) {
-      // Timeout — only retry domains without results yet
-      const remaining = item.domains.filter(d => !state.entries[d]);
-      if (remaining.length === 0) continue; // all processed despite timeout
-
-      const half = Math.max(2, Math.floor(item.size / 2));
-      // Split remaining into two
-      const mid = Math.ceil(remaining.length / 2);
-      const a = remaining.slice(0, mid);
-      const b = remaining.slice(mid);
-      if (b.length) queue.unshift({ domains: b, size: half, retries: 0 });
-      if (a.length) queue.unshift({ domains: a, size: half, retries: 0 });
-      showStatus("run", `Timeout: ${domains.length - remaining.length} done, ${remaining.length} retrying (s=${half})...`);
-      logLine(`TIMEOUT: ${domains.length - remaining.length} ok, ${remaining.length} retry [${remaining.join(", ")}]`, "warn");
-    }
-  }
-
-  disableButtons(false);
-  showStatus("ok", `Done: ${Object.keys(state.entries).length} domains`);
-  logLine(`DONE: ${Object.keys(state.entries).length}/${state.total} domains`, "ok");
 }
 
-async function processBatchWithTimeout(domains, phases) {
-  const timeoutMs = 9000; // Edge Function kills at 10s, warn at 9s
-  let gotDone = false;
-  let lastEventTime = Date.now();
-
-  try {
-    const resp = await fetch(`${SURL.replace(/\/$/, "")}/functions/v1/process-entries`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: SKEY, Authorization: `Bearer ${SKEY}` },
-      body: JSON.stringify({ domains, phases }),
-    });
-
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-
-    while (true) {
-      const { done, value } = await raceWithTimeout(reader.read(), 12000);
-
-      if (done) break;
-
-      if (value) {
-        lastEventTime = Date.now();
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() || "";
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data = JSON.parse(line.slice(6));
-            if (data.type === "done") gotDone = true;
-            handle(data);
-          }
-        }
-      }
-
-      // Check if we're approaching timeout
-      if (Date.now() - lastEventTime > 5000) {
-        reader.cancel();
-        return gotDone;
-      }
-    }
-
-    return gotDone;
-  } catch (e) {
-    logLine(`Fetch error: ${e}`, "err");
-    const remaining = domains.filter(d => !state.entries[d]);
-    if (remaining.length === 0) return true;
-    return false;
-  }
+// === HELPERS ===
+function getDomains() {
+  return document.getElementById("domainInput").value.trim().split("\n").map(l => l.trim()).filter(Boolean);
 }
-
-async function raceWithTimeout(promise, ms) {
-  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("TIMEOUT")), ms));
-  try {
-    return await Promise.race([promise, timeout]);
-  } catch (e) {
-    if (e.message === "TIMEOUT") return { done: true, value: null };
-    throw e;
-  }
+function showStatus(type, text) {
+  const el = document.getElementById("status");
+  el.className = `status st-${type === "run" ? "run" : type}`;
+  el.textContent = text;
+  el.classList.remove("hidden");
 }
+function disableButtons(v) { document.querySelectorAll(".btn-row button").forEach(b => b.disabled = v); }
 
-function handle(data) {
-  if (data.type === "done") return;
-  if (data.type === "start") return; // ignore batch-level start
+// === RENDER ===
+function render() {
+  const arr = domains.map(d => R[d]).filter(Boolean);
+  const c = document.getElementById("counter");
+  c.textContent = `${arr.length}/${domains.length}`;
 
-  if (data.type === "result") {
-    state.entries[data.domain] = data.entry;
-    const e = data.entry;
-    if (data.phase === "rank" || data.phase === "base") {
-      state.counter.rank++;
-      if (e.crux_tier === "E" && e.entry_type === "website") logLine(`${data.domain}: tier=E (not in CrUX)`, "warn");
-    }
-    else if (data.phase === "screenshot") {
-      state.counter.screenshot++;
-      if (!e.screenshot_url) logLine(`${data.domain}: screenshot FAILED`, "err");
-    }
-    else if (data.phase === "meta") {
-      state.counter.meta++;
-      if (!e.name) logLine(`${data.domain}: meta FAILED`, "warn");
-    }
-    rerender();
-  }
-}
+  const cached = arr.filter(e => e._source === "cache").length;
+  document.getElementById("cacheCount").textContent = cached;
 
-function updateCounter() {
-  document.getElementById("counter").textContent = `${Object.keys(state.entries).length}/${state.total}`;
-  document.getElementById("cacheCount").textContent = Object.values(state.entries).filter(e => e._source === "cache").length;
-  document.getElementById("freshCount").textContent = Object.values(state.entries).filter(e => e._source === "fresh").length;
-  document.getElementById("ssCount").textContent = state.counter.screenshot;
-  document.getElementById("metaCount").textContent = state.counter.meta;
-}
+  const ssOk = arr.filter(e => e.screenshot_url).length;
+  document.getElementById("ssCount").textContent = ssOk;
 
-function rerender() {
-  updateCounter();
-  const arr = Object.values(state.entries).sort((a, b) => (a._idx ?? 999) - (b._idx ?? 999));
-  // Add index for sorting
-  Object.keys(state.entries).forEach((k, i) => { if (state.entries[k]._idx === undefined) state.entries[k]._idx = i; });
+  const metaOk = arr.filter(e => e.name && e.description).length;
+  document.getElementById("metaCount").textContent = metaOk;
 
   const tbody = document.getElementById("tableBody");
-  tbody.innerHTML = arr.map(r => {
-    const tier = r.crux_tier ?? "E";
-    const score = r.quality_score ?? 0;
-    const label = r.quality_label ?? "unproven";
-    const rm = r.to_remove ? `<span class="rm-tag">del</span>` : "";
-    const name = (r.name || "-").substring(0, 30);
-    const desc = (r.description || "").substring(0, 60);
-    const ss = r.screenshot_url ? `<a href="${r.screenshot_url}" target="_blank"><img class="ss-img" src="${r.screenshot_url}" alt=""></a>` : "";
-    const metaLoading = r.entry_type === "website" && !r.name && !state.processingDone ? "" : "";
+  tbody.innerHTML = arr.map(e => {
+    const tier = e.crux_tier ?? "E";
+    const score = e.quality_score ?? 0;
+    const label = e.quality_label ?? "unproven";
+    const rm = e.to_remove ? `<span class="rm-tag">del</span>` : "";
+    const name = (e.name || "-").substring(0, 30);
+    const desc = (e.description || "").substring(0, 60);
+    const ss = e.screenshot_url
+      ? `<a href="${e.screenshot_url}" target="_blank"><img class="ss-img" src="${e.screenshot_url}" alt=""></a>`
+      : (e.ssPending ? `<span class="badge b-run">ss...</span>` : "");
+    const meta = !e.name && e.metaPending ? `<span class="badge b-run">meta...</span>` : "";
     return `<tr>
-      <td><strong>${r.id}</strong> ${rm}<br><span style="color:#9d9da3;font-size:11px">${desc}${metaLoading}</span></td>
+      <td><strong>${e.id}</strong> ${rm}${meta}<br><span style="color:#9d9da3;font-size:11px">${desc}</span></td>
       <td>${name}</td>
       <td><span class="tier t-${tier}">${tier}</span></td>
       <td><span class="score s-${label}">${score} ${label}</span></td>
@@ -291,28 +173,209 @@ function rerender() {
   }).join("");
 }
 
+// === PHASE 1: RANK (fast SSE stream) ===
+async function runRank() {
+  if (busy) return;
+  domains = getDomains();
+  if (!domains.length) return;
+  busy = true; disableButtons(true);
+  document.getElementById("resultsPanel").classList.remove("hidden");
+  document.getElementById("tableBody").innerHTML = "";
+  for (const d of domains) if (!R[d]) R[d] = { id: d };
+  render();
+  showStatus("run", "Rank...");
+  logLine(`Rank: ${domains.length} domains`, "info");
+
+  await streamSSE("process-entries", { domains, phases: ["rank"] });
+  busy = false; disableButtons(false);
+  showStatus("ok", `Rank done: ${domains.length} domains`);
+  logLine(`Rank done`, "ok");
+}
+
+// === PHASE 2: SCREENSHOTS (fire & poll) ===
+async function runScreenshots() {
+  if (busy) return;
+  domains = getDomains();
+  if (!domains.length) return;
+  // Ensure we have rank data first
+  if (!R[domains[0]]?.crux_tier) await runRankSequence();
+  busy = true; disableButtons(true);
+  showStatus("run", "Screenshots...");
+  logLine(`Screenshots: ${domains.length} domains`, "info");
+
+  const toShot = domains.filter(d => {
+    const e = R[d];
+    return e && e.crux_tier !== "E" && !e.screenshot_url;
+  });
+  if (!toShot.length) { showStatus("ok", "No screenshots needed"); busy = false; disableButtons(false); return; }
+
+  logLine(`Screenshots to fetch: ${toShot.length}`, "info");
+
+  // Fire all in parallel, poll storage
+  for (const d of toShot) { R[d].ssPending = true; }
+  render();
+
+  const POLL_EVERY = 5000;
+  const MAX_POLLS = 8; // 40 seconds max
+  const baseUrl = SURL.replace(/\/$/, "");
+
+  // Fire all requests
+  const fired = toShot.map(async d => {
+    try {
+      const resp = await fetch(`${baseUrl}/functions/v1/screenshot`, {
+        method: "POST", headers: hdr(),
+        body: JSON.stringify({ domain: d }),
+      });
+      const j = await resp.json();
+      if (j.cached && j.url) {
+        R[d].screenshot_url = j.url;
+        R[d].ssPending = false;
+        logLine(`${d}: screenshot CACHED`, "ok");
+      } else if (j.pending) {
+        logLine(`${d}: screenshot FIRED`, "info");
+      }
+      render();
+    } catch (e) { logLine(`${d}: screenshot FIRE failed: ${e}`, "err"); }
+  });
+  await Promise.all(fired);
+
+  // Poll
+  for (let poll = 0; poll < MAX_POLLS; poll++) {
+    const still = toShot.filter(d => !R[d].screenshot_url);
+    if (!still.length) break;
+
+    await new Promise(r => setTimeout(r, POLL_EVERY));
+
+    for (const d of still) {
+      try {
+        const resp = await fetch(`${baseUrl}/functions/v1/screenshot`, {
+          method: "POST", headers: hdr(),
+          body: JSON.stringify({ domain: d }),
+        });
+        const j = await resp.json();
+        if (j.url) {
+          R[d].screenshot_url = j.url;
+          R[d].ssPending = false;
+          logLine(`${d}: screenshot READY (poll ${poll + 1})`, "ok");
+        }
+      } catch (e) { logLine(`${d}: poll ${poll + 1} failed: ${e}`, "warn"); }
+    }
+    render();
+  }
+
+  // Mark remaining as failed
+  for (const d of toShot) {
+    if (!R[d].screenshot_url) {
+      R[d].ssPending = false;
+      logLine(`${d}: screenshot FAILED after ${MAX_POLLS} polls`, "err");
+    }
+  }
+  render();
+
+  busy = false; disableButtons(false);
+  showStatus("ok", `Screenshots done`);
+}
+
+// === PHASE 3: META (fast per-domain fetch) ===
+async function runMeta() {
+  if (busy) return;
+  domains = getDomains();
+  if (!domains.length) return;
+  if (!R[domains[0]]?.crux_tier) await runRankSequence();
+  busy = true; disableButtons(true);
+  showStatus("run", "Meta...");
+  logLine(`Meta: ${domains.length} domains`, "info");
+
+  const toMeta = domains.filter(d => {
+    const e = R[d];
+    return e && e.entry_type === "website" && (!e.name || !e.description);
+  });
+
+  for (const d of toMeta) { R[d].metaPending = true; }
+  render();
+
+  // 5 parallel via Edge Function
+  const CONC = 5;
+  const baseUrl = SURL.replace(/\/$/, "");
+  for (let i = 0; i < toMeta.length; i += CONC) {
+    const chunk = toMeta.slice(i, i + CONC);
+    await Promise.all(chunk.map(async d => {
+      try {
+        const resp = await fetch(`${baseUrl}/functions/v1/meta`, {
+          method: "POST", headers: hdr(),
+          body: JSON.stringify({ domain: d }),
+        });
+        const { name, description } = await resp.json();
+        if (name) R[d].name = name;
+        if (description) R[d].description = description;
+        R[d].metaPending = false;
+        logLine(`${d}: meta OK (name=${(name || "").substring(0, 20)})`, "ok");
+      } catch (e) {
+        R[d].metaPending = false;
+        logLine(`${d}: meta failed: ${e}`, "err");
+      }
+    }));
+    render();
+  }
+
+  busy = false; disableButtons(false);
+  showStatus("ok", `Meta done`);
+}
+
+// === ALL ===
+async function runAll() {
+  await runRank();
+  await new Promise(r => setTimeout(r, 500));
+  await Promise.all([runScreenshots(), runMeta()]);
+}
+
+async function runRankSequence() {
+  // Internal rank call without button state management
+  const prev = busy;
+  busy = true;
+  disableButtons(true);
+  document.getElementById("resultsPanel").classList.remove("hidden");
+  await streamSSE("process-entries", { domains, phases: ["rank"] });
+  busy = prev;
+  disableButtons(false);
+}
+
+// === SSE stream reader ===
+async function streamSSE(fn, body) {
+  const resp = await fetch(`${SURL.replace(/\/$/, "")}/functions/v1/${fn}`, {
+    method: "POST", headers: hdr(), body: JSON.stringify(body),
+  });
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() || "";
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = JSON.parse(line.slice(6));
+      if (data.type === "result") {
+        R[data.domain] = data.entry;
+        render();
+      }
+    }
+  }
+}
+
+// === Export ===
 function exportCSV() {
-  const arr = Object.values(state.entries);
+  const arr = domains.map(d => R[d]).filter(Boolean);
   if (!arr.length) return;
   const h = "domain,name,description,tier,rank_global,rank_ru,score,label,screenshot_url";
   const rows = arr.map(r => [r.id, r.name, r.description, r.crux_tier, r.crux_rank_global, r.crux_rank_ru, r.quality_score, r.quality_label, r.screenshot_url].map(v => `"${String(v || "").replace(/"/g, '""')}"`).join(","));
-  const csv = h + "\n" + rows.join("\n");
-  const b = new Blob([csv], { type: "text/csv" });
+  const b = new Blob([h + "\n" + rows.join("\n")], { type: "text/csv" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(b);
   a.download = `report_${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
-}
-
-function disableButtons(v) {
-  document.querySelectorAll(".btn-row button").forEach(b => b.disabled = v);
-}
-
-function showStatus(type, text) {
-  const el = document.getElementById("status");
-  el.className = `status st-${type === "run" ? "run" : type}`;
-  el.textContent = text;
-  el.classList.remove("hidden");
 }
 </script>
 </body>

@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0d0d0e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Domains Parser">
+<title>Domains Parser v4</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d0d0e;color:#f5f5f5;padding:16px}
+  .container{max-width:900px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 8px}
+  .sub{color:#9d9da3;margin:0 0 24px;font-size:13px}
+  .card{background:#19191b;border-radius:12px;padding:16px;margin-bottom:16px}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+  button,input[type=text]{padding:8px 14px;border-radius:8px;border:none;font-size:14px}
+  button{background:#f7bd19;color:#000;cursor:pointer;font-weight:600}
+  button:disabled{opacity:.4;cursor:default}
+  button.danger{background:#e53935;color:#fff}
+  button.secondary{background:#242426;color:#f5f5f5}
+  input[type=text]{background:#242426;color:#f5f5f5;width:100%}
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;color:#9d9da3;font-size:12px;padding:8px 6px;border-bottom:1px solid #2a2a2c}
+  td{padding:8px 6px;border-bottom:1px solid #1a1a1c;font-size:13px;vertical-align:middle}
+  .tier{display:inline-block;width:28px;height:28px;line-height:28px;text-align:center;border-radius:6px;font-weight:700;font-size:13px}
+  .tier-A{background:#00c853;color:#000}
+  .tier-B{background:#64dd17;color:#000}
+  .tier-C{background:#ffd600;color:#000}
+  .tier-D{background:#ff9100;color:#000}
+  .tier-E{background:#424242;color:#9d9da3}
+  .score{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:600}
+  .score-premium{background:#00c853;color:#000}
+  .score-good{background:#64dd17;color:#000}
+  .score-low{background:#ffd600;color:#000}
+  .score-poor{background:#e53935;color:#fff}
+  .score-unproven{background:#424242;color:#9d9da3}
+  .remove-tag{display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;background:#e53935;color:#fff}
+  .status-ok{color:#64dd17;font-size:13px}
+  .status-err{color:#e53935;font-size:13px}
+  .status-running{color:#ffd600;font-size:13px}
+  .log{background:#0d0d0e;border-radius:8px;padding:12px;font-family:monospace;font-size:12px;max-height:300px;overflow-y:auto}
+  .log-entry{margin:2px 0}
+  .log-entry.error{color:#e53935}
+  .log-entry.ok{color:#64dd17}
+  .log-entry.info{color:#9d9da3}
+  .empty{text-align:center;padding:40px;color:#9d9da3}
+  .filter-row{display:flex;gap:8px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+  .filter-row label{font-size:13px;color:#9d9da3;display:flex;align-items:center;gap:4px}
+  .img-thumb{width:60px;height:40px;object-fit:cover;border-radius:4px;background:#242426}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Domains Parser v4</h1>
+  <p class="sub">Supabase + CrUX + PageSpeed Screenshots</p>
+
+  <!-- Actions -->
+  <div class="card">
+    <div class="actions">
+      <button id="btnProcessAll" onclick="processAll()">Обработать все</button>
+      <button id="btnImport" class="secondary" onclick="showImport()">Импорт доменов</button>
+      <button id="btnRefresh" class="secondary" onclick="loadEntries()">Обновить</button>
+    </div>
+    <div id="importPanel" class="hidden" style="margin-top:12px">
+      <textarea id="importText" rows="4" style="width:100%;background:#242426;color:#f5f5f5;border:none;border-radius:8px;padding:12px;font-family:monospace;font-size:13px" placeholder="yandex.ru&#10;mail.ru&#10;avito.ru"></textarea>
+      <button onclick="importDomains()" style="margin-top:8px">Добавить</button>
+    </div>
+  </div>
+
+  <!-- Status -->
+  <div id="statusBar" class="hidden card">
+    <span id="statusText"></span>
+  </div>
+
+  <!-- Log -->
+  <div id="logPanel" class="hidden">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+        <strong>Лог обработки</strong>
+        <button class="secondary" onclick="clearLog()" style="font-size:12px">Очистить</button>
+      </div>
+      <div class="log" id="logContent"></div>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <div class="card" style="padding:12px 16px">
+    <div class="filter-row">
+      <label><input type="checkbox" id="filterRemove" onchange="applyFilters()"> Скрыть на удаление</label>
+      <label><input type="checkbox" id="filterOnlyRemove" onchange="applyFilters()"> Только на удаление</label>
+      <label style="margin-left:auto">Всего: <span id="totalCount">0</span></label>
+      <button class="secondary" onclick="processSelected()" style="font-size:12px">Обработать выбранные</button>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="card" style="overflow-x:auto">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:32px"><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"></th>
+          <th>Домен</th>
+          <th>Тип</th>
+          <th>Ранг</th>
+          <th>Оценка</th>
+          <th>Скрин</th>
+          <th>Обновлён</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+    <div id="emptyState" class="empty hidden">Нет записей. Добавьте домены через импорт.</div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// Config — заменить на свои значения!
+// ============================================================
+const SUPABASE_URL = "https://dcrmfvfuyexjdygbupwr.supabase.co/";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcm1mdmZ1eWV4amR5Z2J1cHdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0NjExNjYsImV4cCI6MjEwMjAzNzE2Nn0.lNe0cbwYq2yWV6tr__b6u5B9nZE2dgkD45j4KEoMhNI";
+
+const supabase = window.supabase?.createClient
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
+
+let allEntries = [];
+let processing = false;
+let selected = new Set();
+
+// ============================================================
+// Init
+// ============================================================
+async function init() {
+  if (!supabase) {
+    document.body.innerHTML = '<div class="empty">Загрузите Supabase JS SDK: добавить <br>&lt;script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"&gt;&lt;/script&gt;</div>';
+    return;
+  }
+  await loadEntries();
+}
+
+// ============================================================
+// Data loading
+// ============================================================
+async function loadEntries() {
+  const { data, error } = await supabase
+    .from("entries")
+    .select("*")
+    .order("crux_rank_global", { ascending: true, nullsLast: true });
+
+  if (error) { showError("load: " + error.message); return; }
+  allEntries = data ?? [];
+  document.getElementById("totalCount").textContent = allEntries.length;
+  applyFilters();
+}
+
+function applyFilters() {
+  const hideRemove = document.getElementById("filterRemove").checked;
+  const onlyRemove = document.getElementById("filterOnlyRemove").checked;
+
+  let filtered = allEntries;
+  if (onlyRemove) {
+    filtered = filtered.filter((e) => e.to_remove);
+    document.getElementById("filterRemove").checked = false;
+    document.getElementById("filterRemove").disabled = true;
+  } else {
+    document.getElementById("filterRemove").disabled = false;
+    if (hideRemove) filtered = filtered.filter((e) => !e.to_remove);
+  }
+
+  renderTable(filtered);
+}
+
+function renderTable(entries) {
+  const tbody = document.getElementById("tableBody");
+  const empty = document.getElementById("emptyState");
+
+  if (entries.length === 0) {
+    tbody.innerHTML = "";
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+
+  tbody.innerHTML = entries.map((e) => {
+    const tier = e.crux_tier ?? "E";
+    const score = e.quality_score ?? 0;
+    const label = e.quality_label ?? "unproven";
+    const updated = e.last_updated ? new Date(e.last_updated).toLocaleDateString("ru") : "—";
+    const ss = e.screenshot_url
+      ? `<img class="img-thumb" src="${e.screenshot_url}" alt="">`
+      : "—";
+    const removeTag = e.to_remove
+      ? `<span class="remove-tag">${e.remove_reason || "del"}</span>`
+      : "";
+
+    return `<tr>
+      <td><input type="checkbox" value="${e.id}" onchange="toggleSelect('${e.id}', this.checked)"></td>
+      <td><strong>${e.id}</strong> ${removeTag}</td>
+      <td>${e.entry_type ?? "—"}</td>
+      <td><span class="tier tier-${tier}">${tier}</span></td>
+      <td><span class="score score-${label}">${score} ${label}</span></td>
+      <td>${ss}</td>
+      <td>${updated}</td>
+      <td><button class="secondary" style="font-size:12px;padding:4px 8px" onclick="processSingle('${e.id}')">⟳</button></td>
+    </tr>`;
+  }).join("");
+}
+
+// ============================================================
+// Actions
+// ============================================================
+async function processAll() {
+  await runProcess({ limit: 50 });
+}
+
+async function processSingle(id) {
+  await runProcess({ id });
+}
+
+async function processSelected() {
+  if (selected.size === 0) { addLog("info", "Ничего не выбрано"); return; }
+  for (const id of selected) {
+    await runProcess({ id });
+    await sleep(200);
+  }
+}
+
+async function runProcess(body) {
+  if (processing) return;
+  processing = true;
+  const btn = document.getElementById("btnProcessAll");
+  btn.disabled = true;
+  showStatus("running", "Обработка...");
+  showLog();
+
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/functions/v1/process-entries`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    const result = await resp.json();
+    addLog("ok", `Готово: обработано ${result.processed ?? 0}, пропущено ${result.skipped ?? 0}`);
+    if (result.results) {
+      for (const r of result.results) {
+        addLog("info", `  ${r.id}: tier=${r.cruxTier ?? "E"}, ${r.qualityLabel ?? "?"}`);
+      }
+    }
+    showStatus("ok", "Обработка завершена");
+    await loadEntries();
+  } catch (e) {
+    addLog("error", String(e));
+    showStatus("err", "Ошибка: " + String(e));
+  } finally {
+    processing = false;
+    btn.disabled = false;
+  }
+}
+
+// ============================================================
+// Import
+// ============================================================
+function showImport() {
+  const panel = document.getElementById("importPanel");
+  panel.classList.toggle("hidden");
+}
+
+async function importDomains() {
+  const text = document.getElementById("importText").value.trim();
+  if (!text) return;
+
+  const domains = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  const rows = domains.map((d) => ({ domain: d, active: true }));
+
+  const { error } = await supabase.from("domain_list").upsert(rows, { onConflict: "domain" });
+  if (error) { addLog("error", "Import: " + error.message); return; }
+
+  addLog("ok", `Добавлено доменов: ${domains.length}`);
+  document.getElementById("importText").value = "";
+  document.getElementById("importPanel").classList.add("hidden");
+  await loadEntries();
+}
+
+// ============================================================
+// Select / toggle
+// ============================================================
+function toggleSelectAll() {
+  const checked = document.getElementById("selectAll").checked;
+  document.querySelectorAll("#tableBody input[type=checkbox]").forEach((cb) => {
+    cb.checked = checked;
+    toggleSelect(cb.value, checked);
+  });
+}
+
+function toggleSelect(id, checked) {
+  if (checked) selected.add(id);
+  else selected.delete(id);
+}
+
+// ============================================================
+// UI helpers
+// ============================================================
+function showLog() { document.getElementById("logPanel").classList.remove("hidden"); }
+function clearLog() { document.getElementById("logContent").innerHTML = ""; }
+
+function addLog(cls, text) {
+  const el = document.getElementById("logContent");
+  const div = document.createElement("div");
+  div.className = `log-entry ${cls}`;
+  div.textContent = `[${new Date().toLocaleTimeString("ru")}] ${text}`;
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+}
+
+function showStatus(type, text) {
+  const bar = document.getElementById("statusBar");
+  bar.classList.remove("hidden");
+  bar.className = `card status-${type}`;
+  document.getElementById("statusText").textContent = text;
+  if (type === "ok" || type === "err") setTimeout(() => bar.classList.add("hidden"), 5000);
+}
+
+function showError(text) { addLog("error", text); showStatus("err", text); }
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+init();
+</script>
+</body>
+</html>

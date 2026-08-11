@@ -10,31 +10,65 @@ serve(async (req: Request) => {
   }
 
   const { domain } = await req.json().catch(() => ({}));
-  if (!domain) return new Response(JSON.stringify({ error: "domain required" }), {
+  if (!domain) return new Response(JSON.stringify({ name: "", description: "" }), {
     status: 400, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
   });
 
   try {
     const resp = await fetch(`https://${domain}`, {
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(10_000),
       headers: { "User-Agent": "Mozilla/5.0 (compatible; ParserBot/4.0)" },
     });
-    if (!resp.ok) return new Response(JSON.stringify({ name: "", description: "" }), {
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-    });
-    const html = await resp.text();
-    const ogT = html.match(/<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i);
-    const ogD = html.match(/<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i);
-    const mD = html.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i);
-    const t = html.match(/<title>([^<]+)<\/title>/i);
-    const name = (ogT?.[1] || t?.[1] || "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').trim();
-    const desc = (ogD?.[1] || mD?.[1] || "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').trim();
-    return new Response(JSON.stringify({ name, description }), {
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-    });
+    if (!resp.ok) return out("", "");
+
+    // Detect encoding from Content-Type or fallback to UTF-8
+    let html = "";
+    const ct = resp.headers.get("content-type") ?? "";
+    const charsetMatch = ct.match(/charset=([\w-]+)/i);
+    const charset = charsetMatch?.[1]?.toLowerCase();
+
+    if (charset === "windows-1251" || charset === "cp1251") {
+      const buf = await resp.arrayBuffer();
+      html = new TextDecoder("windows-1251").decode(buf);
+    } else {
+      html = await resp.text();
+    }
+
+    // Try OpenGraph first, then regular meta, then <title>
+    let name = extract(html, /<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i);
+    if (!name) name = extract(html, /<title>([\s\S]*?)<\/title>/i);
+    if (!name) name = extract(html, /<meta[^>]*name=["']title["'][^>]*content=["']([^"']+)["']/i);
+
+    let description = extract(html, /<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i);
+    if (!description) description = extract(html, /<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i);
+
+    // Clean: decode HTML entities, collapse whitespace
+    name = clean(name);
+    description = clean(description);
+
+    return out(name, description);
   } catch {
-    return new Response(JSON.stringify({ name: "", description: "" }), {
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-    });
+    return out("", "");
   }
 });
+
+function extract(html: string, re: RegExp): string {
+  return html.match(re)?.[1] ?? "";
+}
+
+function clean(s: string): string {
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d)))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function out(name: string, description: string) {
+  return new Response(JSON.stringify({ name, description }), {
+    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+  });
+}

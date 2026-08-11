@@ -64,10 +64,10 @@
       <thead>
         <tr>
           <th>Domain</th>
-          <th>Type</th>
+          <th>Name</th>
           <th>Tier</th>
           <th>Score</th>
-          <th>Upd</th>
+          <th>Screen</th>
         </tr>
       </thead>
       <tbody id="tableBody"></tbody>
@@ -140,15 +140,19 @@ function renderTable(results) {
     const tier = r.crux_tier ?? "E";
     const score = r.quality_score ?? 0;
     const label = r.quality_label ?? "unproven";
-    const updated = r.last_updated ? new Date(r.last_updated).toLocaleDateString() : "now";
     const rm = r.to_remove ? `<span class="rm-tag">del</span>` : "";
+    const name = (r.name || r.id).substring(0, 40);
+    const desc = (r.description || "").substring(0, 80);
+    const ss = r.screenshot_url
+      ? `<a href="${r.screenshot_url}" target="_blank"><img src="${r.screenshot_url}" style="width:80px;height:50px;object-fit:cover;border-radius:4px" alt=""></a>`
+      : "-";
 
     return `<tr>
-      <td><strong>${r.id}</strong> ${rm}</td>
-      <td>${r.entry_type ?? ""}</td>
+      <td><strong>${r.id}</strong> ${rm}<br><span style="color:#9d9da3;font-size:11px">${desc}</span></td>
+      <td>${name || "-"}</td>
       <td><span class="tier tier-${tier}">${tier}</span></td>
       <td><span class="score s-${label}">${score} ${label}</span></td>
-      <td style="color:#9d9da3">${updated}</td>
+      <td>${ss}</td>
     </tr>`;
   }).join("");
 }

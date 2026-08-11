@@ -24,7 +24,6 @@ serve(async (req: Request) => {
   );
   const filename = `${domain}.png`;
 
-  // Check cache
   const { data: existing } = await supabase.storage.from("screenshots").createSignedUrl(filename, 120);
   if (existing?.signedUrl) {
     return new Response(JSON.stringify({ ok: true, url: existing.signedUrl, cached: true }), {
@@ -32,11 +31,10 @@ serve(async (req: Request) => {
     });
   }
 
-  // Fire PageSpeed request (don't await — return immediately, upload in background)
   const params = new URLSearchParams({ url: `https://${domain}`, screenshot: "true", strategy: "desktop" });
   if (PAGESPEED_API_KEY) params.set("key", PAGESPEED_API_KEY);
 
-  // Launch in background, don't block response
+  // Fire PageSpeed in background, return immediately
   EdgeRuntime.waitUntil((async () => {
     try {
       const resp = await fetch(`https://www.googleapis.com/pagespeedonline/v5/runPagespeed?${params}`, {
@@ -49,8 +47,7 @@ serve(async (req: Request) => {
       const clean = b64.replace(/^data:image\/\w+;base64,/, "");
       const binary = Uint8Array.from(atob(clean), c => c.charCodeAt(0));
       await supabase.storage.from("screenshots").upload(filename, binary, {
-        contentType: "image/png",
-        upsert: true,
+        contentType: "image/png", upsert: true,
       });
     } catch { /* silent */ }
   })());

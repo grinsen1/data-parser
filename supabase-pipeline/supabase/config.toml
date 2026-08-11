@@ -1,0 +1,17 @@
+{
+  "project_id": "YOUR_PROJECT_ID",
+  "functions": {
+    "screenshot": {
+      "enabled": true,
+      "verify_jwt": false
+    },
+    "crux-rank": {
+      "enabled": true,
+      "verify_jwt": false
+    },
+    "process-entries": {
+      "enabled": true,
+      "verify_jwt": false
+    }
+  }
+}

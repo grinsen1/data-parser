@@ -253,7 +253,8 @@ async function runProcess(body) {
   showLog();
 
   try {
-    const resp = await fetch(`${SUPABASE_URL}/functions/v1/process-entries`, {
+    const baseUrl = SUPABASE_URL.replace(/\/$/, "");
+    const resp = await fetch(`${baseUrl}/functions/v1/process-entries`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

@@ -218,6 +218,7 @@ async function runScreenshots() {
   if (busy) return;
   domains = getDomains();
   if (!domains.length) return;
+  document.getElementById("resultsPanel").classList.remove("hidden");
   // Ensure we have rank data first
   if (!R[domains[0]]?.crux_tier) await runRankSequence();
   busy = true; disableButtons(true);
@@ -302,6 +303,7 @@ async function runMeta() {
   if (busy) return;
   domains = getDomains();
   if (!domains.length) return;
+  document.getElementById("resultsPanel").classList.remove("hidden");
   if (!R[domains[0]]?.crux_tier) await runRankSequence();
   busy = true; disableButtons(true);
   showStatus("run", "Meta...");

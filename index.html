@@ -247,12 +247,15 @@ async function runScreenshots() {
         body: JSON.stringify({ domain: d }),
       });
       const j = await resp.json();
-      if (j.cached && j.url) {
+      if (j.url) {
         R[d].screenshot_url = j.url;
         R[d].ssPending = false;
-        logLine(`${d}: screenshot CACHED`, "ok");
+        logLine(`${d}: screenshot ${j.cached ? "CACHED" : "NEW"}`, "ok");
       } else if (j.pending) {
         logLine(`${d}: screenshot FIRED`, "info");
+      } else if (j.error) {
+        R[d].ssPending = false;
+        logLine(`${d}: screenshot ERR: ${j.error}`, "err");
       }
     } catch (e) { logLine(`${d}: FIRE failed: ${e}`, "err"); }
   }));

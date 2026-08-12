@@ -173,7 +173,7 @@ function render() {
   }).join("");
 }
 
-// === PHASE 1: RANK (fast SSE stream) ===
+// === PHASE 1: RANK (JSON response, no SSE) ===
 async function runRank() {
   if (busy) return;
   domains = getDomains();
@@ -186,10 +186,23 @@ async function runRank() {
   showStatus("run", "Rank...");
   logLine(`Rank: ${domains.length} domains`, "info");
 
-  await streamSSE("process-entries", { domains, phases: ["rank"] });
-  busy = false; disableButtons(false);
-  showStatus("ok", `Rank done: ${domains.length} domains`);
-  logLine(`Rank done`, "ok");
+  try {
+    const resp = await fetch(`${SURL.replace(/\/$/, "")}/functions/v1/process-entries`, {
+      method: "POST", headers: hdr(),
+      body: JSON.stringify({ domains, phases: ["rank"] }),
+    });
+    const data = await resp.json();
+    if (data.error) { logLine(`Rank error: ${data.error}`, "err"); return; }
+    for (const e of data.results ?? []) { R[e.id] = e; }
+    render();
+    showStatus("ok", `Rank done: ${domains.length} domains`);
+    logLine(`Rank done: ${data.results?.length ?? 0} results`, "ok");
+  } catch (e) {
+    logLine(`Rank failed: ${e}`, "err");
+    showStatus("err", "Rank failed");
+  } finally {
+    busy = false; disableButtons(false);
+  }
 }
 
 // === PHASE 2: SCREENSHOTS (fire & poll) ===

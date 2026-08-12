@@ -186,24 +186,22 @@ async function runRank() {
   showStatus("run", "Rank...");
   logLine(`Rank: ${domains.length} domains`, "info");
 
-  try {
-    const resp = await fetch(`${SURL.replace(/\/$/, "")}/functions/v1/process-entries`, {
-      method: "POST", headers: hdr(),
-      body: JSON.stringify({ domains, phases: ["rank"] }),
-    });
-    const data = await resp.json();
-    if (data.error) { logLine(`Rank error: ${data.error}`, "err"); return; }
-    for (const e of data.results ?? []) { R[e.id] = e; }
-    render();
-    showStatus("ok", `Rank done: ${domains.length} domains`);
-    logLine(`Rank done: ${data.results?.length ?? 0} results`, "ok");
-  } catch (e) {
-    logLine(`Rank failed: ${e}`, "err");
-    showStatus("err", "Rank failed");
-  } finally {
-    busy = false; disableButtons(false);
+  const BATCH = 30;
+  for (let i = 0; i < domains.length; i += BATCH) {
+    const batch = domains.slice(i, i + BATCH);
+    try {
+      const resp = await fetch(`${SURL.replace(/\/$/, "")}/functions/v1/process-entries`, {
+        method: "POST", headers: hdr(),
+        body: JSON.stringify({ domains: batch, phases: ["rank"] }),
+      });
+      const data = await resp.json();
+      for (const e of data.results ?? []) { R[e.id] = e; }
+      render();
+      showStatus("run", `Rank: ${Math.min(i+BATCH,domains.length)}/${domains.length}`);
+    } catch (e) {
+      logLine(`Rank batch ${i} failed: ${e}`, "err");
+    }
   }
-}
 
 // === PHASE 2: SCREENSHOTS (fire & poll) ===
 async function runScreenshots() {

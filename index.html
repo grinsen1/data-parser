@@ -202,6 +202,9 @@ async function runRank() {
       logLine(`Rank batch ${i} failed: ${e}`, "err");
     }
   }
+  busy = false; disableButtons(false);
+  showStatus("ok", `Rank done: ${Object.keys(R).filter(k => R[k]?.crux_tier).length} domains`);
+}
 
 // === PHASE 2: SCREENSHOTS (fire & poll) ===
 async function runScreenshots() {

@@ -13,90 +13,152 @@
   .sub{color:#9d9da3;margin:0 0 16px;font-size:13px}
   .card{background:#19191b;border-radius:12px;padding:16px;margin-bottom:16px}
   textarea{width:100%;background:#242426;color:#f5f5f5;border:none;border-radius:8px;padding:12px;font-family:monospace;font-size:13px;resize:vertical}
+  input[type=text]{width:100%;background:#242426;color:#f5f5f5;border:none;border-radius:8px;padding:10px 12px;font-size:14px}
   button{padding:10px 18px;border-radius:8px;border:none;font-size:13px;cursor:pointer;font-weight:600}
   .btn-primary{background:#f7bd19;color:#000}
   .btn-secondary{background:#242426;color:#f5f5f5}
+  .btn-back{background:transparent;color:#9d9da3;border:1px solid #2a2a2c}
   button:disabled{opacity:.4;cursor:default}
   table{width:100%;border-collapse:collapse}
   th{text-align:left;color:#9d9da3;font-size:12px;padding:8px 6px;border-bottom:1px solid #2a2a2c}
   td{padding:8px 6px;border-bottom:1px solid #1a1a1c;font-size:13px;vertical-align:middle}
-  .tier{display:inline-block;width:26px;height:26px;line-height:26px;text-align:center;border-radius:6px;font-weight:700;font-size:12px}
+  .tier{display:inline-block;width:24px;height:24px;line-height:24px;text-align:center;border-radius:6px;font-weight:700;font-size:11px}
   .t-A{background:#00c853;color:#000}.t-B{background:#64dd17;color:#000}
   .t-C{background:#ffd600;color:#000}.t-D{background:#ff9100;color:#000}
   .t-E{background:#424242;color:#9d9da3}
-  .ss-img{width:180px;height:110px;object-fit:cover;border-radius:6px;background:#242426}
+  .ss-img{width:150px;height:90px;object-fit:cover;border-radius:6px;background:#242426}
   .status{margin-top:10px;font-size:13px}
   .st-ok{color:#64dd17}.st-err{color:#e53935}.st-run{color:#ffd600}
   .hidden{display:none}
   .hdr{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+  .batch-row{cursor:pointer;transition:background .15s}
+  .batch-row:hover{background:#1e1e20}
+  .link{color:#4da3ff;cursor:pointer;text-decoration:underline}
   .progress-bar{height:4px;background:#242426;border-radius:2px;margin-bottom:12px;overflow:hidden}
   .progress-bar div{height:100%;background:#f7bd19;transition:width .3s}
+  .muted{color:#9d9da3}
   .pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;margin-right:4px}
   .p-done{background:#64dd17;color:#000}.p-pending{background:#424242;color:#9d9da3}
-  .p-failed{background:#e53935;color:#fff}.p-leased{background:#ffd600;color:#000}
-  .err{color:#e53935;font-size:11px}
-  .thum{width:180px;height:110px;object-fit:cover;border-radius:6px;background:#242426;display:block}
+  .p-dead{background:#e53935;color:#fff}
 </style>
 </head>
 <body>
 <div class="container">
-  <h1>Domains Parser v4</h1>
-  <p class="sub">Серверная очередь: вставил список — Supabase сам собирает ранги, мету, скриншоты</p>
+  <div id="viewList">
+    <h1>Domains Parser v4</h1>
+    <p class="sub">Задачи и оценка рекламных площадок</p>
 
-  <div class="card">
-    <textarea id="domainInput" rows="6" placeholder="yandex.ru&#10;mail.ru&#10;avito.ru&#10;..."></textarea>
-    <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <button class="btn-primary" id="btnSubmit" onclick="submitDomains()">Загрузить</button>
-      <button class="btn-secondary" onclick="kickNow()">Обработать сейчас</button>
-      <span id="status" class="status hidden"></span>
+    <div class="card">
+      <input type="text" id="batchName" placeholder="Название задачи (необязательно)" style="margin-bottom:8px">
+      <textarea id="domainInput" rows="5" placeholder="yandex.ru&#10;mail.ru&#10;avito.ru&#10;..."></textarea>
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+        <button class="btn-primary" id="btnCreate" onclick="createBatch()">Создать задачу</button>
+        <span id="status" class="status hidden"></span>
+      </div>
+    </div>
+
+    <div class="card" style="overflow-x:auto">
+      <div class="hdr"><strong>Мои задачи</strong></div>
+      <table>
+        <thead><tr>
+          <th>Название</th><th>Доменов</th><th>Прогресс</th><th>Создана</th>
+        </tr></thead>
+        <tbody id="batchList"></tbody>
+      </table>
     </div>
   </div>
 
-  <div id="resultsPanel" class="card hidden" style="overflow-x:auto">
-    <div class="progress-bar"><div id="progress" style="width:0%"></div></div>
+  <div id="viewBatch" class="hidden">
     <div class="hdr">
-      <span style="color:#9d9da3;font-size:13px" id="progressText">—</span>
-      <button class="btn-secondary" onclick="exportCSV()">Export CSV</button>
+      <button class="btn-back" onclick="showList()">← Назад</button>
+      <h1 id="batchTitle" style="font-size:18px">Задача</h1>
+      <button class="btn-secondary" onclick="exportBatchCSV()">Export CSV</button>
     </div>
-    <table>
-      <thead><tr>
-        <th>Домен</th><th>Rank</th><th>Tier</th><th>Название</th><th>Скрин</th>
-      </tr></thead>
-      <tbody id="tableBody"></tbody>
-    </table>
+    <div class="card">
+      <div class="progress-bar"><div id="bProgress" style="width:0%"></div></div>
+      <div class="muted" id="bProgressText" style="font-size:13px">—</div>
+    </div>
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead><tr>
+          <th>Домен</th><th>Rank</th><th>Tier</th><th>Название</th><th>Скрин</th>
+        </tr></thead>
+        <tbody id="batchTable"></tbody>
+      </table>
+    </div>
   </div>
 </div>
 
 <script>
 const SURL = "https://dcrmfvfuyexjdygbupwr.supabase.co/";
-const SKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcm1mdmZ1eWV4amR5Z2J1cHdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0NjExNjYsImV4cCI6MjEwMjAzNzE2Nn0.lNe0cbwYq2yWV6tr__b6u5B9nZE2dgDk45j4KEoMhNI";
+const ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcm1mdmZ1eWV4amR5Z2J1cHdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0NjExNjYsImV4cCI6MjEwMjAzNzE2Nn0.lNe0cbwYq2yWV6tr__b6u5B9nZE2dgDk45j4KEoMhNI";
 
-const H = { "Content-Type": "application/json", apikey: SKEY, Authorization: `Bearer ${SKEY}` };
-
+let accessToken = null;   // JWT анонимного пользователя
+let currentBatchId = null;
 let pollTimer = null;
 
-function hdr() { return H; }
+// ============================================================
+// Auth: анонимный вход
+// ============================================================
+async function ensureAuth() {
+  let session = localStorage.getItem("sb_session");
+  if (session) {
+    try {
+      const s = JSON.parse(session);
+      // проверяем живость токена
+      const resp = await fetch(`${SURL.replace(/\/$/, "")}/auth/v1/user`, {
+        headers: { apikey: ANON, Authorization: `Bearer ${s.access_token}` },
+      });
+      if (resp.ok) { accessToken = s.access_token; return; }
+    } catch {}
+  }
 
-async function submitDomains() {
+  // анонимный вход
+  const resp = await fetch(`${SURL.replace(/\/$/, "")}/auth/v1/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: ANON },
+    body: JSON.stringify({}),
+  });
+  if (!resp.ok) throw new Error("anon signup failed: " + await resp.text());
+  const data = await resp.json();
+  accessToken = data.access_token;
+  localStorage.setItem("sb_session", JSON.stringify(data));
+}
+
+function authHeaders() {
+  return {
+    "Content-Type": "application/json",
+    apikey: ANON,
+    Authorization: `Bearer ${accessToken}`,
+  };
+}
+
+// ============================================================
+// Создание задачи
+// ============================================================
+async function createBatch() {
   const text = document.getElementById("domainInput").value.trim();
   if (!text) return;
+  const name = document.getElementById("batchName").value.trim() || ("Задача " + new Date().toLocaleString("ru"));
   const domains = text.split("\n").map(l => l.trim().toLowerCase()).filter(Boolean);
 
-  const btn = document.getElementById("btnSubmit");
+  const btn = document.getElementById("btnCreate");
   btn.disabled = true;
-  showStatus("run", "Регистрирую домены...");
+  showStatus("run", "Создаю задачу...");
 
   try {
-    const resp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/register_domains`, {
+    const resp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/create_batch`, {
       method: "POST",
-      headers: hdr(),
-      body: JSON.stringify({ p_domains: domains }),
+      headers: authHeaders(),
+      body: JSON.stringify({ p_name: name, p_domains: domains }),
     });
     if (!resp.ok) throw new Error(await resp.text());
+    const batchId = await resp.text();
 
-    showStatus("ok", `Добавлено ${domains.length} доменов`);
-    document.getElementById("resultsPanel").classList.remove("hidden");
-    startPolling();
+    document.getElementById("domainInput").value = "";
+    document.getElementById("batchName").value = "";
+    showStatus("ok", `Задача создана (${domains.length} доменов)`);
+    loadBatches();
   } catch (e) {
     showStatus("err", "Ошибка: " + e.message);
   } finally {
@@ -104,39 +166,95 @@ async function submitDomains() {
   }
 }
 
-async function kickNow() {
-  showStatus("run", "Запускаю воркеры...");
-  const base = SURL.replace(/\/$/, "");
-  for (const kind of ["rank", "meta", "screenshot"]) {
-    try {
-      await fetch(`${base}/functions/v1/workr`, {
-        method: "POST", headers: hdr(),
-        body: JSON.stringify({ kind, limit: 20 }),
-      });
-    } catch {}
-  }
-  showStatus("ok", "Воркеры запущены, ждём результат");
-  document.getElementById("resultsPanel").classList.remove("hidden");
-  startPolling();
-}
-
-function startPolling() {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(refresh, 2500);
-  refresh();
-}
-
-async function refresh() {
+// ============================================================
+// Список задач
+// ============================================================
+async function loadBatches() {
   try {
-    // Прогресс по задачам
-    const [domains, tasks] = await Promise.all([
-      fetch(`${SURL.replace(/\/$/, "")}/rest/v1/domains?select=*&order=domain`, { headers: hdr() }).then(r => r.json()),
-      fetch(`${SURL.replace(/\/$/, "")}/rest/v1/tasks?select=kind,state&order=kind`, { headers: hdr() }).then(r => r.json()),
-    ]);
+    const resp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/batches?select=*&order=created_at.desc`, {
+      headers: authHeaders(),
+    });
+    const batches = await resp.json();
 
-    render(domains, tasks);
+    // для каждой задачи считаем домены
+    const itemsResp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/batch_items?select=batch_id`, {
+      headers: authHeaders(),
+    });
+    const items = await itemsResp.json();
+
+    const counts = {};
+    for (const it of items) counts[it.batch_id] = (counts[it.batch_id] || 0) + 1;
+
+    const tbody = document.getElementById("batchList");
+    if (!batches.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="muted">Нет задач. Создайте первую.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = batches.map(b => {
+      const n = counts[b.id] || 0;
+      const d = new Date(b.created_at).toLocaleString("ru");
+      return `<tr class="batch-row" onclick="openBatch(${b.id})">
+        <td><span class="link">${b.name || "Без имени"}</span></td>
+        <td>${n}</td>
+        <td><span class="muted">открыть →</span></td>
+        <td class="muted">${d}</td>
+      </tr>`;
+    }).join("");
   } catch (e) {
-    // тихо
+    console.error(e);
+  }
+}
+
+// ============================================================
+// Страница задачи
+// ============================================================
+async function openBatch(id) {
+  currentBatchId = id;
+  document.getElementById("viewList").classList.add("hidden");
+  document.getElementById("viewBatch").classList.remove("hidden");
+
+  const resp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/batches?id=eq.${id}&select=name`, {
+    headers: authHeaders(),
+  });
+  const b = await resp.json();
+  document.getElementById("batchTitle").textContent = b[0]?.name || "Задача";
+
+  refreshBatch();
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(refreshBatch, 3000);
+}
+
+async function refreshBatch() {
+  if (!currentBatchId) return;
+  try {
+    // домены задачи
+    const itemsResp = await fetch(
+      `${SURL.replace(/\/$/, "")}/rest/v1/batch_items?batch_id=eq.${currentBatchId}&select=domain`,
+      { headers: authHeaders() }
+    );
+    const items = await itemsResp.json();
+    const domains = items.map(i => i.domain);
+
+    if (!domains.length) return;
+
+    // результаты из глобального кэша
+    const domResp = await fetch(
+      `${SURL.replace(/\/$/, "")}/rest/v1/domains?domain=in.(${domains.join(",")})&select=*`,
+      { headers: authHeaders() }
+    );
+    const doms = await domResp.json();
+
+    // задачи для прогресса
+    const taskResp = await fetch(
+      `${SURL.replace(/\/$/, "")}/rest/v1/tasks?domain=in.(${domains.join(",")})&select=kind,state`,
+      { headers: authHeaders() }
+    );
+    const tasks = await taskResp.json();
+
+    renderBatch(doms, tasks, domains.length);
+  } catch (e) {
+    console.error(e);
   }
 }
 
@@ -148,33 +266,31 @@ function tierOf(rank) {
   return "D";
 }
 
-function render(domains, tasks) {
-  // Прогресс
-  const total = tasks.length;
+function renderBatch(doms, tasks, totalDomains) {
   const done = tasks.filter(t => t.state === "done").length;
-  const failed = tasks.filter(t => t.state === "dead" || t.state === "no_data").length;
-
+  const total = totalDomains * 3;
   const pct = total ? Math.round(done / total * 100) : 0;
-  document.getElementById("progress").style.width = pct + "%";
-  document.getElementById("progressText").textContent =
-    `${done}/${total} задач готово` + (failed ? `, ${failed} безнадёжных` : "");
+  document.getElementById("bProgress").style.width = pct + "%";
+  document.getElementById("bProgressText").textContent = `${done}/${total} задач готово (${pct}%)`;
 
-  // Таблица
-  const tbody = document.getElementById("tableBody");
-  if (!domains.length) {
-    tbody.innerHTML = '<tr><td colspan="5" style="color:#9d9da3">Нет доменов</td></tr>';
+  const map = {};
+  for (const d of doms) map[d.domain] = d;
+
+  const tbody = document.getElementById("batchTable");
+  if (!doms.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="muted">Обработка... откройте позже</td></tr>';
     return;
   }
 
-  tbody.innerHTML = domains.map(d => {
+  tbody.innerHTML = doms.map(d => {
     const tier = tierOf(d.rank);
-    const name = (d.title || "").substring(0, 40) || '<span style="color:#9d9da3">—</span>';
+    const name = (d.title || "").substring(0, 40) || '<span class="muted">—</span>';
     const ss = d.screenshot_path
       ? `<img class="ss-img" src="${d.screenshot_path}" loading="lazy" alt="">`
-      : '<span style="color:#9d9da3">—</span>';
+      : '<span class="muted">—</span>';
     return `<tr>
       <td><strong>${d.domain}</strong></td>
-      <td>${d.rank ?? '<span style="color:#9d9da3">—</span>'}</td>
+      <td>${d.rank ?? '<span class="muted">—</span>'}</td>
       <td><span class="tier t-${tier}">${tier}</span></td>
       <td>${name}</td>
       <td>${ss}</td>
@@ -182,19 +298,32 @@ function render(domains, tasks) {
   }).join("");
 }
 
-function exportCSV() {
-  fetch(`${SURL.replace(/\/$/, "")}/rest/v1/domains?select=*&order=domain`, { headers: hdr() })
-    .then(r => r.json())
-    .then(domains => {
-      const h = "domain,rank,title,description,screenshot_path";
-      const rows = domains.map(d => [d.domain, d.rank, d.title, d.description, d.screenshot_path]
-        .map(v => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","));
-      const b = new Blob([h + "\n" + rows.join("\n")], { type: "text/csv" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(b);
-      a.download = `domains_${new Date().toISOString().slice(0,10)}.csv`;
-      a.click();
-    });
+function showList() {
+  document.getElementById("viewBatch").classList.add("hidden");
+  document.getElementById("viewList").classList.remove("hidden");
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  loadBatches();
+}
+
+// ============================================================
+// Export
+// ============================================================
+async function exportBatchCSV() {
+  if (!currentBatchId) return;
+  const itemsResp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/batch_items?batch_id=eq.${currentBatchId}&select=domain`, { headers: authHeaders() });
+  const items = await itemsResp.json();
+  const domains = items.map(i => i.domain);
+  const domResp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/domains?domain=in.(${domains.join(",")})&select=*`, { headers: authHeaders() });
+  const doms = await domResp.json();
+
+  const h = "domain,rank,tier,title,description,screenshot_path";
+  const rows = doms.map(d => [d.domain, d.rank, tierOf(d.rank), d.title, d.description, d.screenshot_path]
+    .map(v => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","));
+  const b = new Blob([h + "\n" + rows.join("\n")], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(b);
+  a.download = `batch_${currentBatchId}.csv`;
+  a.click();
 }
 
 function showStatus(type, text) {
@@ -203,6 +332,14 @@ function showStatus(type, text) {
   el.textContent = text;
   el.classList.remove("hidden");
 }
+
+// ============================================================
+// Init
+// ============================================================
+(async () => {
+  await ensureAuth();
+  await loadBatches();
+})();
 </script>
 </body>
 </html>

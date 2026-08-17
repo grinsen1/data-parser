@@ -98,22 +98,37 @@ let currentBatchId = null;
 let pollTimer = null;
 
 // ============================================================
-// Auth: анонимный вход
+// Auth: анонимный вход (с refresh_token, чтобы не плодить юзеров)
 // ============================================================
 async function ensureAuth() {
   let session = localStorage.getItem("sb_session");
   if (session) {
-    try {
-      const s = JSON.parse(session);
-      // проверяем живость токена
-      const resp = await fetch(`${SURL.replace(/\/$/, "")}/auth/v1/user`, {
-        headers: { apikey: ANON, Authorization: `Bearer ${s.access_token}` },
+    const s = JSON.parse(session);
+
+    // 1. access_token жив?
+    const userResp = await fetch(`${SURL.replace(/\/$/, "")}/auth/v1/user`, {
+      headers: { apikey: ANON, Authorization: `Bearer ${s.access_token}` },
+    });
+    if (userResp.ok) { accessToken = s.access_token; return; }
+
+    // 2. access_token протух — обновляем через refresh_token (тот же юзер)
+    if (s.refresh_token) {
+      const refreshResp = await fetch(`${SURL.replace(/\/$/, "")}/auth/v1/token?grant_type=refresh_token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: ANON },
+        body: JSON.stringify({ refresh_token: s.refresh_token }),
       });
-      if (resp.ok) { accessToken = s.access_token; return; }
-    } catch {}
+      if (refreshResp.ok) {
+        const data = await refreshResp.json();
+        accessToken = data.access_token;
+        const merged = { ...s, ...data };
+        localStorage.setItem("sb_session", JSON.stringify(merged));
+        return;
+      }
+    }
   }
 
-  // анонимный вход
+  // 3. нового анонима создаём только если ничего не помогло
   const resp = await fetch(`${SURL.replace(/\/$/, "")}/auth/v1/signup`, {
     method: "POST",
     headers: { "Content-Type": "application/json", apikey: ANON },
@@ -147,13 +162,27 @@ async function createBatch() {
   showStatus("run", "Создаю задачу...");
 
   try {
+    // 1. Создаём пустую задачу
     const resp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/create_batch`, {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify({ p_name: name, p_domains: domains }),
+      body: JSON.stringify({ p_name: name, p_domains: [] }),
     });
     if (!resp.ok) throw new Error(await resp.text());
-    const batchId = await resp.text();
+    const batchId = parseInt(await resp.text());
+
+    // 2. Добавляем домены чанками по 500 (обход лимита 1000)
+    const CHUNK = 500;
+    for (let i = 0; i < domains.length; i += CHUNK) {
+      const chunk = domains.slice(i, i + CHUNK);
+      const addResp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/add_batch_items`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ p_batch_id: batchId, p_domains: chunk }),
+      });
+      if (!addResp.ok) throw new Error(await addResp.text());
+      showStatus("run", `Добавляю домены... ${Math.min(i + CHUNK, domains.length)}/${domains.length}`);
+    }
 
     document.getElementById("domainInput").value = "";
     document.getElementById("batchName").value = "";

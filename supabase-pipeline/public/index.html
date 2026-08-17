@@ -284,7 +284,8 @@ function renderBatch(doms, tasks, totalDomains) {
 
   tbody.innerHTML = doms.map(d => {
     const tier = tierOf(d.rank);
-    const name = (d.title || "").substring(0, 40) || '<span class="muted">—</span>';
+    const name = (d.title || "").substring(0, 60) || '<span class="muted">—</span>';
+    const desc = (d.description || "").substring(0, 120);
     const ss = d.screenshot_path
       ? `<img class="ss-img" src="${d.screenshot_path}" loading="lazy" alt="">`
       : '<span class="muted">—</span>';
@@ -292,7 +293,7 @@ function renderBatch(doms, tasks, totalDomains) {
       <td><strong>${d.domain}</strong></td>
       <td>${d.rank ?? '<span class="muted">—</span>'}</td>
       <td><span class="tier t-${tier}">${tier}</span></td>
-      <td>${name}</td>
+      <td>${name}${desc ? `<br><span class="muted" style="font-size:11px">${desc}</span>` : ""}</td>
       <td>${ss}</td>
     </tr>`;
   }).join("");

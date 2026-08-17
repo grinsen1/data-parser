@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -8,16 +8,15 @@
 <style>
   *{box-sizing:border-box}
   body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d0d0e;color:#f5f5f5;padding:16px}
-  .container{max-width:1100px;margin:0 auto}
+  .container{max-width:1000px;margin:0 auto}
   h1{font-size:20px;margin:0 0 4px}
   .sub{color:#9d9da3;margin:0 0 16px;font-size:13px}
   .card{background:#19191b;border-radius:12px;padding:16px;margin-bottom:16px}
   textarea{width:100%;background:#242426;color:#f5f5f5;border:none;border-radius:8px;padding:12px;font-family:monospace;font-size:13px;resize:vertical}
-  button{padding:8px 16px;border-radius:8px;border:none;font-size:13px;cursor:pointer;font-weight:600}
+  button{padding:10px 18px;border-radius:8px;border:none;font-size:13px;cursor:pointer;font-weight:600}
   .btn-primary{background:#f7bd19;color:#000}
   .btn-secondary{background:#242426;color:#f5f5f5}
-  .btn-danger{background:#e53935;color:#fff}
-  button:disabled{opacity:.4}
+  button:disabled{opacity:.4;cursor:default}
   table{width:100%;border-collapse:collapse}
   th{text-align:left;color:#9d9da3;font-size:12px;padding:8px 6px;border-bottom:1px solid #2a2a2c}
   td{padding:8px 6px;border-bottom:1px solid #1a1a1c;font-size:13px;vertical-align:middle}
@@ -25,68 +24,46 @@
   .t-A{background:#00c853;color:#000}.t-B{background:#64dd17;color:#000}
   .t-C{background:#ffd600;color:#000}.t-D{background:#ff9100;color:#000}
   .t-E{background:#424242;color:#9d9da3}
-  .score{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600}
-  .s-premium{background:#00c853;color:#000}.s-good{background:#64dd17;color:#000}
-  .s-low{background:#ffd600;color:#000}.s-poor{background:#e53935;color:#fff}.s-unproven{background:#424242;color:#9d9da3}
-  .rm-tag{padding:1px 5px;border-radius:4px;font-size:10px;background:#e53935;color:#fff}
-  .ss-img{width:210px;height:126px;object-fit:cover;border-radius:6px;background:#242426}
-  .status{margin-top:8px;font-size:13px}
+  .ss-img{width:180px;height:110px;object-fit:cover;border-radius:6px;background:#242426}
+  .status{margin-top:10px;font-size:13px}
   .st-ok{color:#64dd17}.st-err{color:#e53935}.st-run{color:#ffd600}
-  .hidden{display:none}.empty{text-align:center;padding:40px;color:#9d9da3}
-  .hdr-row{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
-  .btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center}
-  .dot{animation:blink 1s infinite}@keyframes blink{50%{opacity:.2}}
-  .log-panel{background:#0d0d0e;border-radius:8px;padding:12px;max-height:200px;overflow-y:auto;font-family:monospace;font-size:11px;margin-top:8px}
-  .log-line{margin:1px 0;word-break:break-all}
-  .log-err{color:#e53935}.log-warn{color:#ffd600}.log-info{color:#9d9da3}.log-ok{color:#64dd17}
-  .log-btn-row{display:flex;gap:6px;margin-bottom:8px}
-  .log-btn-row button{font-size:11px;padding:4px 10px}
-  .badge{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;margin-left:4px}
-  .b-ok{background:#64dd17;color:#000}.b-run{background:#ffd600;color:#000}.b-err{background:#e53935;color:#fff}
+  .hidden{display:none}
+  .hdr{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+  .progress-bar{height:4px;background:#242426;border-radius:2px;margin-bottom:12px;overflow:hidden}
+  .progress-bar div{height:100%;background:#f7bd19;transition:width .3s}
+  .pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;margin-right:4px}
+  .p-done{background:#64dd17;color:#000}.p-pending{background:#424242;color:#9d9da3}
+  .p-failed{background:#e53935;color:#fff}.p-leased{background:#ffd600;color:#000}
+  .err{color:#e53935;font-size:11px}
+  .thum{width:180px;height:110px;object-fit:cover;border-radius:6px;background:#242426;display:block}
 </style>
 </head>
 <body>
 <div class="container">
   <h1>Domains Parser v4</h1>
-  <p class="sub">CrUX rank + screenshot (PageSpeed, fire & poll) + title/description</p>
+  <p class="sub">Серверная очередь: вставил список — Supabase сам собирает ранги, мету, скриншоты</p>
 
   <div class="card">
     <textarea id="domainInput" rows="6" placeholder="yandex.ru&#10;mail.ru&#10;avito.ru&#10;..."></textarea>
-    <div class="btn-row">
-      <button class="btn-primary" id="btnAll" onclick="runAll()">All</button>
-      <button class="btn-secondary" onclick="runRank()">Rank &amp; Score</button>
-      <button class="btn-secondary" onclick="runScreenshots()">Screenshots</button>
-      <button class="btn-secondary" onclick="runMeta()">Titles &amp; Desc</button>
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button class="btn-primary" id="btnSubmit" onclick="submitDomains()">Загрузить</button>
+      <button class="btn-secondary" onclick="kickNow()">Обработать сейчас</button>
       <span id="status" class="status hidden"></span>
     </div>
   </div>
 
   <div id="resultsPanel" class="card hidden" style="overflow-x:auto">
-    <div class="hdr-row" style="margin-bottom:12px">
-      <span style="color:#9d9da3;font-size:13px">
-        Results: <strong id="counter">0/0</strong>
-        (cached: <span id="cacheCount" style="color:#64dd17">0</span>,
-         ss: <span id="ssCount" style="color:#2196f3">0</span>,
-         meta: <span id="metaCount" style="color:#9c27b0">0</span>)
-      </span>
+    <div class="progress-bar"><div id="progress" style="width:0%"></div></div>
+    <div class="hdr">
+      <span style="color:#9d9da3;font-size:13px" id="progressText">—</span>
       <button class="btn-secondary" onclick="exportCSV()">Export CSV</button>
     </div>
     <table>
       <thead><tr>
-        <th>Domain</th><th>Name</th><th>Tier</th><th>Score</th><th>Screen</th>
+        <th>Домен</th><th>Rank</th><th>Tier</th><th>Название</th><th>Скрин</th>
       </tr></thead>
       <tbody id="tableBody"></tbody>
     </table>
-  </div>
-
-  <div class="card">
-    <div class="log-btn-row">
-      <strong style="font-size:13px">Log</strong>
-      <span style="color:#9d9da3;font-size:11px;flex:1" id="logSummary"></span>
-      <button class="btn-secondary" onclick="copyLog()">Copy All</button>
-      <button class="btn-danger" onclick="clearLog()">Clear</button>
-    </div>
-    <div class="log-panel" id="logPanel"></div>
   </div>
 </div>
 
@@ -94,287 +71,137 @@
 const SURL = "https://dcrmfvfuyexjdygbupwr.supabase.co/";
 const SKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcm1mdmZ1eWV4amR5Z2J1cHdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0NjExNjYsImV4cCI6MjEwMjAzNzE2Nn0.lNe0cbwYq2yWV6tr__b6u5B9nZE2dgDk45j4KEoMhNI";
 
-const R = {}; // global results { domain: entry }
-let domains = [];
-let busy = false;
+const H = { "Content-Type": "application/json", apikey: SKEY, Authorization: `Bearer ${SKEY}` };
 
-function hdr() { return { "Content-Type": "application/json", apikey: SKEY, Authorization: `Bearer ${SKEY}` }; }
+let pollTimer = null;
 
-// === LOGGING ===
-const log = { lines: [], errs: 0, warns: 0 };
-function logLine(text, type) {
-  const t = new Date().toLocaleTimeString();
-  log.lines.push({ time: t, text, type });
-  if (type === "err") log.errs++;
-  if (type === "warn") log.warns++;
-  const el = document.getElementById("logPanel"), div = document.createElement("div");
-  div.className = `log-line log-${type}`;
-  div.textContent = `[${t}] ${text}`;
-  el.appendChild(div);
-  el.scrollTop = el.scrollHeight;
-  document.getElementById("logSummary").textContent = `${log.errs} errors, ${log.warns} warnings`;
+function hdr() { return H; }
+
+async function submitDomains() {
+  const text = document.getElementById("domainInput").value.trim();
+  if (!text) return;
+  const domains = text.split("\n").map(l => l.trim().toLowerCase()).filter(Boolean);
+
+  const btn = document.getElementById("btnSubmit");
+  btn.disabled = true;
+  showStatus("run", "Регистрирую домены...");
+
+  try {
+    const resp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/register_domains`, {
+      method: "POST",
+      headers: hdr(),
+      body: JSON.stringify({ p_domains: domains }),
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+
+    showStatus("ok", `Добавлено ${domains.length} доменов`);
+    document.getElementById("resultsPanel").classList.remove("hidden");
+    startPolling();
+  } catch (e) {
+    showStatus("err", "Ошибка: " + e.message);
+  } finally {
+    btn.disabled = false;
+  }
 }
-function copyLog() {
-  const t = log.lines.map(l => `[${l.time}] [${l.type}] ${l.text}`).join("\n");
-  navigator.clipboard.writeText(t).then(() => logLine("Log copied", "ok"));
+
+async function kickNow() {
+  showStatus("run", "Запускаю воркеры...");
+  const base = SURL.replace(/\/$/, "");
+  for (const kind of ["rank", "meta", "screenshot"]) {
+    try {
+      await fetch(`${base}/functions/v1/workr`, {
+        method: "POST", headers: hdr(),
+        body: JSON.stringify({ kind, limit: 20 }),
+      });
+    } catch {}
+  }
+  showStatus("ok", "Воркеры запущены, ждём результат");
+  document.getElementById("resultsPanel").classList.remove("hidden");
+  startPolling();
 }
-function clearLog() {
-  log.lines = []; log.errs = 0; log.warns = 0;
-  document.getElementById("logPanel").innerHTML = "";
-  document.getElementById("logSummary").textContent = "";
+
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(refresh, 2500);
+  refresh();
 }
 
-// === HELPERS ===
-function getDomains() {
-  return document.getElementById("domainInput").value.trim().split("\n").map(l => l.trim()).filter(Boolean);
+async function refresh() {
+  try {
+    // Прогресс по задачам
+    const [domains, tasks] = await Promise.all([
+      fetch(`${SURL.replace(/\/$/, "")}/rest/v1/domains?select=*&order=domain`, { headers: hdr() }).then(r => r.json()),
+      fetch(`${SURL.replace(/\/$/, "")}/rest/v1/tasks?select=kind,state&order=kind`, { headers: hdr() }).then(r => r.json()),
+    ]);
+
+    render(domains, tasks);
+  } catch (e) {
+    // тихо
+  }
 }
-function showStatus(type, text) {
-  const el = document.getElementById("status");
-  el.className = `status st-${type === "run" ? "run" : type}`;
-  el.textContent = text;
-  el.classList.remove("hidden");
+
+function tierOf(rank) {
+  if (rank === null || rank === undefined) return "E";
+  if (rank <= 1000) return "A";
+  if (rank <= 50000) return "B";
+  if (rank <= 500000) return "C";
+  return "D";
 }
-function disableButtons(v) { document.querySelectorAll(".btn-row button").forEach(b => b.disabled = v); }
 
-// === RENDER ===
-function render() {
-  const arr = domains.map(d => R[d]).filter(Boolean);
-  const c = document.getElementById("counter");
-  c.textContent = `${arr.length}/${domains.length}`;
+function render(domains, tasks) {
+  // Прогресс
+  const total = tasks.length;
+  const done = tasks.filter(t => t.state === "done").length;
+  const failed = tasks.filter(t => t.state === "dead" || t.state === "no_data").length;
 
-  const cached = arr.filter(e => e._source === "cache").length;
-  document.getElementById("cacheCount").textContent = cached;
+  const pct = total ? Math.round(done / total * 100) : 0;
+  document.getElementById("progress").style.width = pct + "%";
+  document.getElementById("progressText").textContent =
+    `${done}/${total} задач готово` + (failed ? `, ${failed} безнадёжных` : "");
 
-  const ssOk = arr.filter(e => e.screenshot_url).length;
-  document.getElementById("ssCount").textContent = ssOk;
-
-  const metaOk = arr.filter(e => e.name && e.description).length;
-  document.getElementById("metaCount").textContent = metaOk;
-
+  // Таблица
   const tbody = document.getElementById("tableBody");
-  tbody.innerHTML = arr.map(e => {
-    const tier = e.crux_tier ?? "E";
-    const score = e.quality_score ?? 0;
-    const label = e.quality_label ?? "unproven";
-    const rm = e.to_remove ? `<span class="rm-tag">del</span>` : "";
-    const name = (e.name || "-").substring(0, 30);
-    const desc = (e.description || "").substring(0, 60);
-    const ss = e.screenshot_url
-      ? `<a href="${e.screenshot_url}" target="_blank"><img class="ss-img" src="${e.screenshot_url}" alt=""></a>`
-      : (e.ssPending ? `<span class="badge b-run">ss...</span>` : "");
-    const meta = !e.name && e.metaPending ? `<span class="badge b-run">meta...</span>` : "";
+  if (!domains.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="color:#9d9da3">Нет доменов</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = domains.map(d => {
+    const tier = tierOf(d.rank);
+    const name = (d.title || "").substring(0, 40) || '<span style="color:#9d9da3">—</span>';
+    const ss = d.screenshot_path
+      ? `<img class="ss-img" src="${d.screenshot_path}" loading="lazy" alt="">`
+      : '<span style="color:#9d9da3">—</span>';
     return `<tr>
-      <td><strong>${e.id}</strong> ${rm}${meta}<br><span style="color:#9d9da3;font-size:11px">${desc}</span></td>
-      <td>${name}</td>
+      <td><strong>${d.domain}</strong></td>
+      <td>${d.rank ?? '<span style="color:#9d9da3">—</span>'}</td>
       <td><span class="tier t-${tier}">${tier}</span></td>
-      <td><span class="score s-${label}">${score} ${label}</span></td>
+      <td>${name}</td>
       <td>${ss}</td>
     </tr>`;
   }).join("");
 }
 
-// === PHASE 1: RANK (JSON response, no SSE) ===
-async function runRank() {
-  if (busy) return;
-  domains = getDomains();
-  if (!domains.length) return;
-  busy = true; disableButtons(true);
-  document.getElementById("resultsPanel").classList.remove("hidden");
-  document.getElementById("tableBody").innerHTML = "";
-  for (const d of domains) if (!R[d]) R[d] = { id: d };
-  render();
-  showStatus("run", "Rank...");
-  logLine(`Rank: ${domains.length} domains`, "info");
-
-  const BATCH = 30;
-  for (let i = 0; i < domains.length; i += BATCH) {
-    const batch = domains.slice(i, i + BATCH);
-    let success = false;
-    for (let retry = 0; retry < 3 && !success; retry++) {
-      try {
-        if (retry > 0) { await new Promise(r => setTimeout(r, 2000)); logLine(`Batch ${Math.floor(i/BATCH)+1} retry ${retry}...`, "info"); }
-        const resp = await fetch(`${SURL.replace(/\/$/, "")}/functions/v1/process-entries`, {
-          method: "POST", headers: hdr(),
-          body: JSON.stringify({ domains: batch, phases: ["rank"] }),
-        });
-        const data = await resp.json();
-        if (data.error) throw new Error(data.error);
-        for (const e of data.results ?? []) { R[e.id] = e; }
-        render();
-        showStatus("run", `Rank: ${Math.min(i+BATCH,domains.length)}/${domains.length}`);
-        success = true;
-      } catch (e) {
-        console.error(`Batch ${Math.floor(i/BATCH)+1} error:`, e);
-        logLine(`Batch ${Math.floor(i/BATCH)+1} failed (try ${retry+1}/3): ${e.message || e}`, "err");
-      }
-    }
-  }
-  busy = false; disableButtons(false);
-  showStatus("ok", `Rank done: ${Object.keys(R).filter(k => R[k]?.crux_tier).length} domains`);
-}
-
-// === PHASE 2: SCREENSHOTS (fire & poll) ===
-async function runScreenshots() {
-  if (busy) return;
-  domains = getDomains();
-  if (!domains.length) return;
-  document.getElementById("resultsPanel").classList.remove("hidden");
-  // Ensure we have rank data first
-  if (!R[domains[0]]?.crux_tier) await runRankSequence();
-  busy = true; disableButtons(true);
-  showStatus("run", "Screenshots...");
-  logLine(`Screenshots: ${domains.length} domains`, "info");
-
-  const toShot = domains.filter(d => {
-    const e = R[d];
-    return e && e.crux_tier !== "E" && !e.screenshot_url;
-  });
-  if (!toShot.length) { showStatus("ok", "No screenshots needed"); busy = false; disableButtons(false); return; }
-
-  logLine(`Screenshots to fetch: ${toShot.length}`, "info");
-
-  for (const d of toShot) { R[d].ssPending = true; }
-  render();
-
-  const POLL_EVERY = 5000;
-  const MAX_POLLS = 16;
-  const baseUrl = SURL.replace(/\/$/, "");
-
-  // Fire all
-  await Promise.all(toShot.map(async d => {
-    try {
-      const resp = await fetch(`${baseUrl}/functions/v1/screenshot`, {
-        method: "POST", headers: hdr(),
-        body: JSON.stringify({ domain: d }),
-      });
-      const j = await resp.json();
-      if (j.url) {
-        R[d].screenshot_url = j.url;
-        R[d].ssPending = false;
-        logLine(`${d}: screenshot ${j.cached ? "CACHED" : "NEW"}`, "ok");
-      } else if (j.pending) {
-        logLine(`${d}: screenshot FIRED`, "info");
-      } else if (j.error) {
-        R[d].ssPending = false;
-        logLine(`${d}: screenshot ERR: ${j.error}`, "err");
-      }
-    } catch (e) { logLine(`${d}: FIRE failed: ${e}`, "err"); }
-  }));
-  render();
-
-  // Poll Storage
-  for (let poll = 0; poll < MAX_POLLS; poll++) {
-    const still = toShot.filter(d => !R[d].screenshot_url);
-    if (!still.length) break;
-    await new Promise(r => setTimeout(r, POLL_EVERY));
-
-    await Promise.all(still.map(async d => {
-      try {
-        const resp = await fetch(`${baseUrl}/functions/v1/screenshot`, {
-          method: "POST", headers: hdr(),
-          body: JSON.stringify({ domain: d }),
-        });
-        const j = await resp.json();
-        if (j.url) {
-          R[d].screenshot_url = j.url;
-          R[d].ssPending = false;
-          logLine(`${d}: screenshot READY (poll ${poll + 1})`, "ok");
-        }
-      } catch { /* poll continues */ }
-    }));
-    render();
-  }
-
-  // Mark remaining as failed
-  for (const d of toShot) {
-    if (!R[d].screenshot_url) {
-      R[d].ssPending = false;
-      logLine(`${d}: screenshot FAILED`, "err");
-    }
-  }
-  render();
-
-  busy = false; disableButtons(false);
-  showStatus("ok", `Screenshots done`);
-}
-
-// === PHASE 3: META (fast per-domain fetch) ===
-async function runMeta() {
-  if (busy) return;
-  domains = getDomains();
-  if (!domains.length) return;
-  document.getElementById("resultsPanel").classList.remove("hidden");
-  if (!R[domains[0]]?.crux_tier) await runRankSequence();
-  busy = true; disableButtons(true);
-  showStatus("run", "Meta...");
-  logLine(`Meta: ${domains.length} domains`, "info");
-
-  const toMeta = domains.filter(d => {
-    const e = R[d];
-    return e && e.entry_type === "website" && (!e.name || !e.description);
-  });
-
-  for (const d of toMeta) { R[d].metaPending = true; }
-  render();
-
-  // 5 parallel via Edge Function
-  const CONC = 5;
-  const baseUrl = SURL.replace(/\/$/, "");
-  for (let i = 0; i < toMeta.length; i += CONC) {
-    const chunk = toMeta.slice(i, i + CONC);
-    await Promise.all(chunk.map(async d => {
-      try {
-        const resp = await fetch(`${baseUrl}/functions/v1/meta`, {
-          method: "POST", headers: hdr(),
-          body: JSON.stringify({ domain: d }),
-        });
-        const { name, description } = await resp.json();
-        if (name) R[d].name = name;
-        if (description) R[d].description = description;
-        R[d].metaPending = false;
-        logLine(`${d}: meta OK (name=${(name || "").substring(0, 20)})`, "ok");
-      } catch (e) {
-        R[d].metaPending = false;
-        logLine(`${d}: meta failed: ${e}`, "err");
-      }
-    }));
-    render();
-  }
-
-  busy = false; disableButtons(false);
-  showStatus("ok", `Meta done`);
-}
-
-// === ALL ===
-async function runAll() {
-  await runRank();
-  await new Promise(r => setTimeout(r, 500));
-  await Promise.all([runScreenshots(), runMeta()]);
-}
-
-async function runRankSequence() {
-  try {
-    const resp = await fetch(`${SURL.replace(/\/$/, "")}/functions/v1/process-entries`, {
-      method: "POST", headers: hdr(),
-      body: JSON.stringify({ domains, phases: ["rank"] }),
-    });
-    const data = await resp.json();
-    for (const e of data.results ?? []) R[e.id] = e;
-    render();
-  } catch {}
-}
-
-// === Export ===
 function exportCSV() {
-  const arr = domains.map(d => R[d]).filter(Boolean);
-  if (!arr.length) return;
-  const h = "domain,name,description,tier,rank_global,rank_ru,score,label,screenshot_url";
-  const rows = arr.map(r => [r.id, r.name, r.description, r.crux_tier, r.crux_rank_global, r.crux_rank_ru, r.quality_score, r.quality_label, r.screenshot_url].map(v => `"${String(v || "").replace(/"/g, '""')}"`).join(","));
-  const b = new Blob([h + "\n" + rows.join("\n")], { type: "text/csv" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(b);
-  a.download = `report_${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
+  fetch(`${SURL.replace(/\/$/, "")}/rest/v1/domains?select=*&order=domain`, { headers: hdr() })
+    .then(r => r.json())
+    .then(domains => {
+      const h = "domain,rank,title,description,screenshot_path";
+      const rows = domains.map(d => [d.domain, d.rank, d.title, d.description, d.screenshot_path]
+        .map(v => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","));
+      const b = new Blob([h + "\n" + rows.join("\n")], { type: "text/csv" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(b);
+      a.download = `domains_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+    });
+}
+
+function showStatus(type, text) {
+  const el = document.getElementById("status");
+  el.className = `status st-${type}`;
+  el.textContent = text;
+  el.classList.remove("hidden");
 }
 </script>
 </body>

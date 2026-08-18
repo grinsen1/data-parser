@@ -284,8 +284,7 @@ async function openBatch(id) {
   document.getElementById("batchTitle").textContent = b[0]?.name || "Задача";
 
   refreshBatch();
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(refreshBatch, 10000);
+  startPolling();
 }
 
 async function refreshBatch() {
@@ -326,9 +325,21 @@ async function refreshBatch() {
 
     renderProgress(prog);
     renderBatch(doms);
+
+    // всё обработано — останавливаем поллинг (нет pending/leased)
+    const hasPending = prog.some(r => r.state === "pending" || r.state === "leased");
+    if (!hasPending && pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
   } catch (e) {
     console.error(e);
   }
+}
+
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(refreshBatch, 30000);
 }
 
 const KIND_LABELS = {
@@ -508,7 +519,8 @@ async function kickData() {
       });
     } catch {}
   }
-  showStatus("ok", "Данные запущены, обновление через 3 сек");
+  startPolling();
+  showStatus("ok", "Данные запущены, обновление через 30 сек");
 }
 
 async function kickScreenshots() {
@@ -521,6 +533,7 @@ async function kickScreenshots() {
       body: JSON.stringify({ kind: "screenshot", limit: 30 }),
     });
   } catch {}
+  startPolling();
   showStatus("ok", "Скриншоты запущены");
 }
 

@@ -283,7 +283,7 @@ async function openBatch(id) {
 
   refreshBatch();
   if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(refreshBatch, 3000);
+  pollTimer = setInterval(refreshBatch, 10000);
 }
 
 async function refreshBatch() {

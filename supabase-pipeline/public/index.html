@@ -486,8 +486,16 @@ function updateSortIndicator() {
 function sortBy(field) {
   if (sortField === field) sortAsc = !sortAsc;
   else { sortField = field; sortAsc = true; }
+  currentDoms.sort(compareDom);
   updateSortIndicator();
-  renderBatch(currentDoms);
+
+  // переупорядочить строки на месте, без перерисовки (скриншоты не перезагружаются)
+  const tbody = document.getElementById("batchTable");
+  const order = new Map();
+  currentDoms.forEach((d, i) => order.set(d.domain, i));
+  const rows = Array.from(tbody.querySelectorAll("tr"));
+  rows.sort((a, b) => (order.get(a.dataset.domain) ?? 1e9) - (order.get(b.dataset.domain) ?? 1e9));
+  rows.forEach(r => tbody.appendChild(r));
 }
 
 function tierCell(d) {
@@ -588,7 +596,7 @@ function renderBatch(doms) {
       ? `<img class="ss-img" src="${d.screenshot_path}" loading="lazy" alt="">`
       : '<span class="muted">—</span>';
 
-    return `<tr>
+    return `<tr data-domain="${d.domain}">
       <td><strong>${d.domain}</strong>${cat}</td>
       <td>${tierCell(d)}</td>
       <td>${verdictCell(d)}</td>

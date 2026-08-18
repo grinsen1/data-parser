@@ -405,8 +405,13 @@ function verdictOf(d) {
   if (tier === "E" || (foreignTail > 15 && d.geo_verdict === "ok")) return "delete";
 
   // check: подозрительные сигналы
-  const lcp = d.lcp_p75, cls = d.cls_p75, phone = d.phone, reload = d.reload;
-  if ((lcp != null && lcp > 4000) || (cls != null && cls > 0.25) || (phone != null && phone > 0.9) || (reload != null && reload > 0.15)) return "check";
+  const lcp = d.lcp_p75, inp = d.inp_p75, cls = d.cls_p75, phone = d.phone, reload = d.reload, prerender = d.prerender;
+  if ((lcp != null && lcp > 4000) ||
+      (inp != null && inp > 500) ||
+      (cls != null && cls > 0.25) ||
+      (phone != null && phone > 0.9) ||
+      (reload != null && reload > 0.15) ||
+      (prerender != null && prerender > 0.035)) return "check";
 
   return "ok";
 }
@@ -421,18 +426,27 @@ function tierCell(d) {
   return `<span class="tier t-${tier}">${tier}</span>`;
 }
 
-function lcpCell(d) {
-  if (d.lcp_p75 == null) return '<span class="muted">—</span>';
-  const v = d.lcp_p75;
-  const cls = v > 4000 ? 'style="color:#e53935;font-weight:600"' : (v > 2500 ? 'style="color:#ff9100"' : '');
-  return `<span ${cls}>${v}ms</span>`;
-}
+function bad(v) { return 'style="color:#e53935;font-weight:600"'; }
+function warn(v) { return 'style="color:#ff9100"'; }
 
-function phoneCell(d) {
-  if (d.phone == null) return '';
-  const p = Math.round(d.phone * 100);
-  const cls = p > 90 ? 'style="color:#e53935;font-weight:600"' : '';
-  return `<span class="muted" style="font-size:11px" ${cls}>phone ${p}%</span>`;
+function techCell(d) {
+  if (d.lcp_p75 == null && d.inp_p75 == null && d.cls_p75 == null && d.phone == null) {
+    return '<span class="muted">—</span>';
+  }
+  const parts = [];
+  const lcp = d.lcp_p75;
+  if (lcp != null) parts.push(`<span ${lcp > 4000 ? bad() : lcp > 2500 ? warn() : ''}>LCP ${lcp}ms</span>`);
+  const inp = d.inp_p75;
+  if (inp != null) parts.push(`<span ${inp > 500 ? bad() : ''}>INP ${inp}ms</span>`);
+  const cls = d.cls_p75;
+  if (cls != null) parts.push(`<span ${cls > 0.25 ? bad() : ''}>CLS ${cls}</span>`);
+  const reload = d.reload;
+  if (reload != null) parts.push(`<span ${reload > 0.15 ? bad() : ''}>reload ${Math.round(reload*100)}%</span>`);
+  const prerender = d.prerender;
+  if (prerender != null) parts.push(`<span ${prerender > 0.035 ? bad() : ''}>pre ${Math.round(prerender*100)}%</span>`);
+  const phone = d.phone;
+  if (phone != null) parts.push(`<span ${phone > 0.9 ? bad() : ''}>phone ${Math.round(phone*100)}%</span>`);
+  return parts.join(' · ');
 }
 
 function geoCell(d) {
@@ -514,7 +528,7 @@ function renderBatch(doms) {
       <td>${d.rank ?? '<span class="muted">—</span>'}</td>
       <td>${tierCell(d)}</td>
       <td>${name}</td>
-      <td>${lcpCell(d)}<br>${phoneCell(d)}</td>
+      <td>${techCell(d)}</td>
       <td>${geoCell(d)}</td>
       <td>${ss}</td>
     </tr>`;

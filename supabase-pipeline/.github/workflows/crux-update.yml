@@ -1,0 +1,40 @@
+name: Update crux ranks
+
+on:
+  schedule:
+    - cron: '0 4 15 * *'   # 15 числа каждого месяца, 04:00 UTC
+  workflow_dispatch:         # ручной запуск
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Update crux_ranks
+        run: |
+          python supabase-pipeline/scripts/crux_update.py \
+            --supabase-url "${{ secrets.SUPABASE_URL }}" \
+            --supabase-key "${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
+
+      - name: Reset rank tasks
+        run: |
+          python - <<'EOF'
+          import requests, json
+          url = "${{ secrets.SUPABASE_URL }}"
+          key = "${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
+          h = {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+          # сброс rank-задач в pending после обновления справочника
+          r = requests.patch(
+              f"{url}/rest/v1/tasks",
+              headers={**h, "Prefer": "return=minimal"},
+              params={"kind": "eq.rank", "state": "eq.done"},
+              json={"state": "pending", "done_at": None, "lease_until": None},
+              timeout=60,
+          )
+          print("reset rank:", r.status_code)
+          EOF

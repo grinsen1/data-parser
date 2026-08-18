@@ -458,22 +458,35 @@ function verdictCell(d) {
   return `<span style="color:${color};font-weight:600">${v}</span>`;
 }
 
+function compareDom(a, b) {
+  let va, vb;
+  if (sortField === "tier") { va = a.rank_source == null ? null : tierOf(a.rank); vb = b.rank_source == null ? null : tierOf(b.rank); }
+  else if (sortField === "verdict") { va = verdictOf(a); vb = verdictOf(b); }
+  else { va = a[sortField]; vb = b[sortField]; }
+
+  if (va == null && vb == null) return 0;
+  if (va == null) return 1;
+  if (vb == null) return -1;
+  if (typeof va === "string") return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+  return sortAsc ? va - vb : vb - va;
+}
+
+function updateSortIndicator() {
+  document.querySelectorAll('th[data-sort]').forEach(th => {
+    const title = th.querySelector('.th-title');
+    if (!title) return;
+    const cur = th.textContent.includes('↑') || th.textContent.includes('↓') ? th.textContent.replace(/[↑↓]/, '').trim() : '';
+    th.innerHTML = th.innerHTML.replace(/[↑↓]/g, '');
+    if (th.dataset.sort === sortField) {
+      th.innerHTML += ` <span style="color:#f7bd19">${sortAsc ? '↑' : '↓'}</span>`;
+    }
+  });
+}
+
 function sortBy(field) {
   if (sortField === field) sortAsc = !sortAsc;
   else { sortField = field; sortAsc = true; }
-
-  currentDoms.sort((a, b) => {
-    let va, vb;
-    if (field === "tier") { va = a.rank_source == null ? null : tierOf(a.rank); vb = b.rank_source == null ? null : tierOf(b.rank); }
-    else if (field === "verdict") { va = verdictOf(a); vb = verdictOf(b); }
-    else { va = a[field]; vb = b[field]; }
-
-    if (va == null && vb == null) return 0;
-    if (va == null) return 1;
-    if (vb == null) return -1;
-    if (typeof va === "string") return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
-    return sortAsc ? va - vb : vb - va;
-  });
+  updateSortIndicator();
   renderBatch(currentDoms);
 }
 
@@ -550,8 +563,9 @@ function closeGeo() {
 }
 
 function renderBatch(doms) {
-  currentDoms = doms;
-  for (const d of doms) domCache[d.domain] = d;
+  currentDoms = [...doms];
+  if (sortField) currentDoms.sort(compareDom);
+  for (const d of currentDoms) domCache[d.domain] = d;
 
   const tbody = document.getElementById("batchTable");
   if (!doms.length) {

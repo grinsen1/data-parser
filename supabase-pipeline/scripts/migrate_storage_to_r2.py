@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Разовая миграция: переносит скриншоты из Supabase Storage в Cloudflare R2.
-Обновляет domains.screenshot_path на публичный r2.dev URL.
+Миграция: Supabase Storage → Cloudflare R2.
+Скачивает напрямую через Storage API (download endpoint + service key),
+загружает в R2, обновляет screenshot_path/source, удаляет из Storage.
 
 Запуск:
     python migrate_storage_to_r2.py --supabase-url ... --supabase-key ...
-
-Требует: pip install boto3 requests
 """
 import argparse
+import concurrent.futures
 import boto3
 import requests
 from botocore.config import Config
@@ -23,7 +23,6 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--supabase-url", required=True)
     ap.add_argument("--supabase-key", required=True)
-    ap.add_argument("--limit", type=int, default=0, help="0 = все")
     args = ap.parse_args()
 
     url = args.supabase_url.rstrip("/")
@@ -38,31 +37,43 @@ def main():
         config=Config(signature_version="s3v4"),
     )
 
-    # домены со скриншотом (storage или thumio, но не r2)
-    r = requests.get(
-        f"{url}/rest/v1/domains",
-        headers=H,
-        params={"screenshot_path": "not.is.null", "screenshot_source": "neq.r2", "select": "domain,screenshot_path,screenshot_source", "limit": str(args.limit or 2000)},
-        timeout=30,
-    )
-    rows = r.json()
-    print(f"Скриншотов для переноса: {len(rows)}")
+    # все домены со скриншотом (кроме уже r2), с пагинацией
+    rows = []
+    offset = 0
+    while True:
+        r = requests.get(
+            f"{url}/rest/v1/domains",
+            headers=H,
+            params={"screenshot_path": "not.is.null", "select": "domain,screenshot_source", "limit": "1000", "offset": str(offset)},
+            timeout=60,
+        )
+        page = r.json()
+        if not page:
+            break
+        rows.extend(x for x in page if x.get("screenshot_source") != "r2")
+        offset += 1000
+    print(f"Для переноса: {len(rows)}", flush=True)
 
-    ok = 0
-    for i, d in enumerate(rows, 1):
+    def migrate(d):
         domain = d["domain"]
         try:
-            # скачать из Supabase Storage (или thum.io)
-            img = requests.get(d["screenshot_path"], timeout=30).content
-            if len(img) < 1000:
-                continue
-
-            # определить расширение
-            ct = d.get("screenshot_source")
-            key = f"{domain}.jpg"  # всё приводим к jpg (уже сконвертировано воркером)
+            # скачать из Storage напрямую (download endpoint)
+            # пробуем .jpg потом .png
+            for ext in ("jpg", "png"):
+                dl = requests.get(
+                    f"{url}/storage/v1/object/screenshots/{domain}.{ext}",
+                    headers=H,
+                    timeout=30,
+                )
+                if dl.status_code == 200 and len(dl.content) > 1000:
+                    img = dl.content
+                    key = f"{domain}.{ext}"
+                    break
+            else:
+                return f"NOFILE {domain}"
 
             # загрузить в R2
-            s3.put_object(Bucket="screenshots", Key=key, Body=img, ContentType="image/jpeg")
+            s3.put_object(Bucket="screenshots", Key=key, Body=img, ContentType="image/jpeg" if key.endswith("jpg") else "image/png")
 
             # обновить path
             public = f"{R2_PUBLIC_URL}/{key}"
@@ -73,13 +84,19 @@ def main():
                 json={"screenshot_path": public, "screenshot_source": "r2"},
                 timeout=30,
             )
-
-            ok += 1
-            print(f"[{i}/{len(rows)}] {domain}: -> R2 ({len(img)//1024}KB)")
+            return f"OK {domain} ({len(img)//1024}KB)"
         except Exception as e:
-            print(f"[{i}/{len(rows)}] {domain}: ERROR {e}")
+            return f"ERR {domain}: {e}"
 
-    print(f"\nГотово: {ok}/{len(rows)} перенесено в R2")
+    ok = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+        for i, res in enumerate(ex.map(migrate, rows), 1):
+            if res.startswith("OK"):
+                ok += 1
+            if i % 50 == 0:
+                print(f"[{i}/{len(rows)}] ok={ok}", flush=True)
+
+    print(f"\nГотово: {ok}/{len(rows)} перенесено", flush=True)
 
 
 if __name__ == "__main__":

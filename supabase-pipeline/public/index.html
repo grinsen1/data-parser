@@ -29,6 +29,7 @@
   .t-C{background:#ffd600;color:#000}.t-D{background:#ff9100;color:#000}
   .t-E{background:#424242;color:#9d9da3}
   .ss-img{width:150px;height:90px;object-fit:cover;border-radius:6px;background:#242426}
+  .ss-lazy{width:150px;height:90px;border-radius:6px;background:#242426;display:flex;align-items:center;justify-content:center;color:#9d9da3;cursor:pointer;font-size:14px}
   .status{margin-top:10px;font-size:13px}
   .st-ok{color:#64dd17}.st-err{color:#e53935}.st-run{color:#ffd600}
   .hidden{display:none}
@@ -489,7 +490,7 @@ function renderBatch(doms) {
         : '<span class="muted">—</span>';
 
     const ss = d.screenshot_path
-      ? `<img class="ss-img" src="${d.screenshot_path}" loading="lazy" alt="">`
+      ? `<div class="ss-lazy" data-src="${d.screenshot_path}" onclick="loadShot(this)" title="Клик — загрузить скриншот">▶</div>`
       : '<span class="muted">—</span>';
 
     return `<tr>
@@ -502,6 +503,18 @@ function renderBatch(doms) {
       <td>${ss}</td>
     </tr>`;
   }).join("");
+}
+
+function loadShot(el) {
+  const src = el.dataset.src;
+  if (!src) return;
+  const img = document.createElement("img");
+  img.className = "ss-img";
+  img.src = src;
+  img.onerror = () => { el.textContent = "✕"; el.style.cursor = "default"; };
+  el.innerHTML = "";
+  el.appendChild(img);
+  el.onclick = null;
 }
 
 // ============================================================

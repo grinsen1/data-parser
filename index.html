@@ -103,10 +103,10 @@
     <div class="card" style="background:#141416;border-left:3px solid #f7bd19;padding:12px 16px">
       <div style="font-size:11px;color:#9d9da3;line-height:1.6">
         <b style="color:#f5f5f5">Скорость загрузки</b> — сколько миллисекунд рисуется главный контент (до 2500 хорошо, свыше 4000 — юзер уйдёт до показа рекламы)<br>
-        <b style="color:#f5f5f5">Отклик на клик</b> — сколько миллисекунд сайт реагирует на клик/тап (свыше 500 — тормозит)<br>
-        <b style="color:#f5f5f5">Сдвиг вёрстки</b> — насколько контент «скачет» при загрузке (свыше 0.25 — баннер уедет из виду, мисклики)<br>
+        <b style="color:#f5f5f5">Отклик на клик</b> — время от клика/тапа/нажатия клавиши до отрисовки реакции (любое взаимодействие: меню, кнопки, переход). Свыше 500мс — тормозит<br>
+        <b style="color:#f5f5f5">Сдвиг вёрстки</b> — балл = доля экрана, затронутая сдвигом × расстояние. Блок во весь экран, уехавший на 25% высоты = 0.25. Рекламные блоки без заданного размера — главная причина<br>
         <b style="color:#f5f5f5">Обновления</b> — доля людей, жмущих F5/обновить (свыше 15% — подозрение на автоперезагрузку/накрутку)<br>
-        <b style="color:#f5f5f5">Предзагрузка</b> — браузер заранее грузит страницу (свыше 3.5% — сайт сам накручивает загрузки)<br>
+        <b style="color:#f5f5f5">Предзагрузка</b> — браузер грузит и рендерит страницу до перехода: либо по предсказанию (адрес набирают руками), либо сайт сам просит через link prerender. Для неизвестного домена — накрутка загрузок<br>
         <b style="color:#f5f5f5">С телефона</b> — доля мобильных (свыше 90% — аномалия для Рунета)<br>
         <b style="color:#f5f5f5">Гео</b> — доля РФ (клик — все страны), ⚠ = неевропейский хвост &gt;15% (покупной иностранный трафик)<br>
         <b style="color:#f5f5f5">Тир</b> — A/B/C/D популярность по CrUX, E = нет живого трафика, «—» = не проверено<br>
@@ -116,14 +116,14 @@
     <div class="card" style="overflow-x:auto">
       <table>
         <thead><tr>
-          <th>Домен</th><th>Тир</th><th>Название</th>
-          <th>Скорость загрузки<br><span class="th-sub">до показа контента</span></th>
-          <th>Отклик на клик<br><span class="th-sub">реакция на тап</span></th>
-          <th>Сдвиг вёрстки<br><span class="th-sub">реклама двигает контент</span></th>
-          <th>Обновления<br><span class="th-sub">F5 — накрутка показов</span></th>
-          <th>Предзагрузка<br><span class="th-sub">сам себя грузит</span></th>
-          <th>С телефона<br><span class="th-sub">доля мобильных</span></th>
-          <th>Гео</th><th>Скрин</th>
+          <th data-sort="domain">Домен</th><th data-sort="tier">Тир</th><th data-sort="verdict">Вердикт</th><th data-sort="title">Название</th>
+          <th data-sort="lcp_p75">Скорость загрузки<br><span class="th-sub">до показа контента</span></th>
+          <th data-sort="inp_p75">Отклик на клик<br><span class="th-sub">клик/тап/клавиша → отрисовка</span></th>
+          <th data-sort="cls_p75">Сдвиг вёрстки<br><span class="th-sub">балл: сдвиг × расстояние</span></th>
+          <th data-sort="reload">Обновления<br><span class="th-sub">F5 — накрутка показов</span></th>
+          <th data-sort="prerender">Предзагрузка<br><span class="th-sub">грузит до перехода</span></th>
+          <th data-sort="phone">С телефона<br><span class="th-sub">доля мобильных</span></th>
+          <th data-sort="ru_share">Гео</th><th>Скрин</th>
         </tr></thead>
         <tbody id="batchTable"></tbody>
       </table>
@@ -151,6 +151,9 @@ let currentBatchId = null;
 let pollTimer = null;
 const domCache = {};      // кэш доменов для модалки гео
 let lastRenderKey = null; // ключ последних данных — чтобы не перерисовывать без изменений
+let currentDoms = [];     // текущий список доменов (для сортировки)
+let sortField = null;
+let sortAsc = true;
 
 // ============================================================
 // Auth: анонимный вход (с refresh_token, чтобы не плодить юзеров)
@@ -437,6 +440,31 @@ function verdictOf(d) {
   return "ok";
 }
 
+function verdictCell(d) {
+  const v = verdictOf(d);
+  const color = v === "ok" ? "#64dd17" : v === "check" ? "#ffd600" : "#e53935";
+  return `<span style="color:${color};font-weight:600">${v}</span>`;
+}
+
+function sortBy(field) {
+  if (sortField === field) sortAsc = !sortAsc;
+  else { sortField = field; sortAsc = true; }
+
+  currentDoms.sort((a, b) => {
+    let va, vb;
+    if (field === "tier") { va = a.rank_source == null ? null : tierOf(a.rank); vb = b.rank_source == null ? null : tierOf(b.rank); }
+    else if (field === "verdict") { va = verdictOf(a); vb = verdictOf(b); }
+    else { va = a[field]; vb = b[field]; }
+
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    if (typeof va === "string") return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+    return sortAsc ? va - vb : vb - va;
+  });
+  renderBatch(currentDoms);
+}
+
 function tierCell(d) {
   // проверено: rank_source != null → tier (E если нет в CrUX)
   // непроверено: rank_source == null → прочерк
@@ -510,11 +538,12 @@ function closeGeo() {
 }
 
 function renderBatch(doms) {
+  currentDoms = doms;
   for (const d of doms) domCache[d.domain] = d;
 
   const tbody = document.getElementById("batchTable");
   if (!doms.length) {
-    tbody.innerHTML = '<tr><td colspan="11" class="muted">Обработка... откройте позже</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="muted">Обработка... откройте позже</td></tr>';
     return;
   }
 
@@ -536,6 +565,7 @@ function renderBatch(doms) {
     return `<tr>
       <td><strong>${d.domain}</strong>${cat}</td>
       <td>${tierCell(d)}</td>
+      <td>${verdictCell(d)}</td>
       <td>${name}</td>
       <td>${lcpCell(d)}</td>
       <td>${inpCell(d)}</td>
@@ -689,6 +719,10 @@ function showStatus(type, text) {
 // Init
 // ============================================================
 (async () => {
+  document.querySelectorAll('th[data-sort]').forEach(th => {
+    th.style.cursor = 'pointer';
+    th.onclick = () => sortBy(th.dataset.sort);
+  });
   await ensureAuth();
   await loadBatches();
 })();

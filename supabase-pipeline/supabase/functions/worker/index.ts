@@ -1,6 +1,8 @@
 // Universal Parser worker
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { decode as decodePng } from "https://esm.sh/@jsquash/png@3.0.1";
+import { encode as encodeJpeg } from "https://esm.sh/@jsquash/jpeg@1.2.0";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL") ?? "",
@@ -126,12 +128,25 @@ async function doScreenshot(domain: string): Promise<{ ok: boolean; error?: stri
     const buf = new Uint8Array(await resp.arrayBuffer());
     if (buf.length < 1000) return { ok: false, error: "screenshot too small" };
 
-    const ct = (resp.headers.get("content-type") || "image/png").toLowerCase();
-    const ext = ct.includes("gif") ? "gif" : ct.includes("jpeg") || ct.includes("jpg") ? "jpg" : "png";
+    // Конвертация PNG → JPEG (качество 80) для лёгкого хранения/архива
+    let finalBuf = buf;
+    let finalCt = "image/png";
+    let ext = "png";
+
+    try {
+      const imageData = await decodePng(buf.buffer as ArrayBuffer);
+      const jpegBuf = await encodeJpeg(imageData, { quality: 80 });
+      finalBuf = new Uint8Array(jpegBuf);
+      finalCt = "image/jpeg";
+      ext = "jpg";
+    } catch {
+      // не PNG (редкий случай) — сохраняем как есть
+    }
+
     const realFilename = `${domain}.${ext}`;
 
-    const { error: uploadErr } = await supabase.storage.from("screenshots").upload(realFilename, buf, {
-      contentType: ct,
+    const { error: uploadErr } = await supabase.storage.from("screenshots").upload(realFilename, finalBuf, {
+      contentType: finalCt,
       upsert: true,
     });
     if (uploadErr) return { ok: false, error: `upload: ${uploadErr.message}` };

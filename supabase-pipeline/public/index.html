@@ -288,29 +288,32 @@ async function openBatch(id) {
   startPolling();
 }
 
+async function getBatchDomains() {
+  const cntResp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/batch_domains_count`, {
+    method: "POST", headers: authHeaders(),
+    body: JSON.stringify({ p_batch_id: currentBatchId }),
+  });
+  const totalCount = parseInt(await cntResp.text());
+  if (!totalCount) return [];
+
+  const doms = [];
+  const PAGE = 500;
+  for (let offset = 0; offset < totalCount; offset += PAGE) {
+    const r = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/batch_domains`, {
+      method: "POST", headers: authHeaders(),
+      body: JSON.stringify({ p_batch_id: currentBatchId, p_offset: offset, p_limit: PAGE }),
+    });
+    const page = await r.json();
+    doms.push(...(page || []));
+  }
+  return doms;
+}
+
 async function refreshBatch() {
   if (!currentBatchId) return;
   try {
-    // количество доменов задачи
-    const cntResp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/batch_domains_count`, {
-      method: "POST", headers: authHeaders(),
-      body: JSON.stringify({ p_batch_id: currentBatchId }),
-    });
-    const totalCount = parseInt(await cntResp.text());
-
-    if (!totalCount) return;
-
-    // домены пагинацией (обход лимита 1000)
-    const doms = [];
-    const PAGE = 500;
-    for (let offset = 0; offset < totalCount; offset += PAGE) {
-      const r = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/batch_domains`, {
-        method: "POST", headers: authHeaders(),
-        body: JSON.stringify({ p_batch_id: currentBatchId, p_offset: offset, p_limit: PAGE }),
-      });
-      const page = await r.json();
-      doms.push(...(page || []));
-    }
+    const doms = await getBatchDomains();
+    if (!doms.length) return;
 
     // прогресс через batch_progress
     const progResp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/batch_progress`, {
@@ -393,6 +396,19 @@ function tierOf(rank) {
   if (rank <= 50000) return "B";
   if (rank <= 500000) return "C";
   return "D";
+}
+
+function verdictOf(d) {
+  // delete: нет живого трафика (E) или покупной иностранный трафик
+  const tier = d.rank_source == null ? null : tierOf(d.rank);
+  const foreignTail = d.foreign_tail ?? 0;
+  if (tier === "E" || (foreignTail > 15 && d.geo_verdict === "ok")) return "delete";
+
+  // check: подозрительные сигналы
+  const lcp = d.lcp_p75, cls = d.cls_p75, phone = d.phone, reload = d.reload;
+  if ((lcp != null && lcp > 4000) || (cls != null && cls > 0.25) || (phone != null && phone > 0.9) || (reload != null && reload > 0.15)) return "check";
+
+  return "ok";
 }
 
 function tierCell(d) {
@@ -552,14 +568,12 @@ async function exportBatchXLSX() {
   if (!currentBatchId) return;
   if (typeof XLSX === "undefined") { alert("XLSX библиотека не загружена"); return; }
 
-  const itemsResp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/batch_items?batch_id=eq.${currentBatchId}&select=domain`, { headers: authHeaders() });
-  const items = await itemsResp.json();
-  const domains = items.map(i => i.domain);
-  const domResp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/domains?domain=in.(${domains.join(",")})&select=*`, { headers: authHeaders() });
-  const doms = await domResp.json();
+  const doms = await getBatchDomains();
+  if (!doms.length) { alert("Нет данных"); return; }
 
   const cols = [
     ["domain", "Домен"],
+    ["verdict", "Вердикт"],
     ["rank", "Ранг CrUX"],
     ["tier", "Тир"],
     ["title", "Название"],
@@ -586,6 +600,7 @@ async function exportBatchXLSX() {
   const header = cols.map(c => c[1]);
   const rows = doms.map(d => cols.map(c => {
     let v = d[c[0]];
+    if (c[0] === "verdict") v = verdictOf(d);
     if (c[0] === "tier") v = (d.rank_source == null) ? "" : tierOf(d.rank);
     if (c[0] === "ru_share" && v != null) v = Math.round(v * 10) / 10;
     return v ?? "";
@@ -603,27 +618,28 @@ async function exportScreenshots() {
     alert("JSZip не загружен");
     return;
   }
-  const itemsResp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/batch_items?batch_id=eq.${currentBatchId}&select=domain`, { headers: authHeaders() });
-  const items = await itemsResp.json();
-  const domains = items.map(i => i.domain);
-  const domResp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/domains?domain=in.(${domains.join(",")})&select=domain,screenshot_path`, { headers: authHeaders() });
-  const doms = await domResp.json();
+  const doms = await getBatchDomains();
 
   const withScreenshot = doms.filter(d => d.screenshot_path);
   if (!withScreenshot.length) { alert("Нет скриншотов"); return; }
 
   showStatus("run", `Скачиваю ${withScreenshot.length} скриншотов...`);
   const zip = new JSZip();
-  let i = 0;
-  for (const d of withScreenshot) {
-    try {
-      const resp = await fetch(d.screenshot_path);
-      const blob = await resp.blob();
-      const ext = (d.screenshot_path.match(/\.(\w+)(?:\?|$)/) || [,"png"])[1];
-      zip.file(`${d.domain}.${ext}`, blob);
-    } catch {}
-    i++;
-    if (i % 20 === 0) showStatus("run", `Скачано ${i}/${withScreenshot.length}`);
+  let done = 0;
+  const CONC = 20;
+  for (let i = 0; i < withScreenshot.length; i += CONC) {
+    const batch = withScreenshot.slice(i, i + CONC);
+    const parts = await Promise.all(batch.map(async d => {
+      try {
+        const resp = await fetch(d.screenshot_path);
+        const blob = await resp.blob();
+        const ext = (d.screenshot_path.match(/\.(\w+)(?:\?|$)/) || [,"jpg"])[1];
+        return { name: `${d.domain}.${ext}`, blob };
+      } catch { return null; }
+    }));
+    for (const p of parts) if (p) zip.file(p.name, p.blob);
+    done += batch.length;
+    showStatus("run", `Скачано ${done}/${withScreenshot.length}`);
   }
 
   const content = await zip.generateAsync({ type: "blob" });

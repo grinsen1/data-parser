@@ -110,7 +110,7 @@
 </div>
 
 <!-- Модальное окно гео -->
-<div id="geoModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100" onclick="if(event.target===this)closeGeo()">
+<div id="geoModal" style="position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:100" onclick="if(event.target===this)closeGeo()">
   <div style="background:#19191b;border-radius:12px;padding:20px;max-width:420px;width:90%;max-height:80vh;overflow-y:auto">
     <div class="hdr">
       <strong id="geoModalTitle">География</strong>
@@ -440,11 +440,11 @@ function openGeo(domain) {
 
     document.getElementById("geoModalBody").innerHTML = rows + otherRow;
   }
-  document.getElementById("geoModal").classList.remove("hidden");
+  document.getElementById("geoModal").style.display = "flex";
 }
 
 function closeGeo() {
-  document.getElementById("geoModal").classList.add("hidden");
+  document.getElementById("geoModal").style.display = "none";
 }
 
 function renderBatch(doms) {

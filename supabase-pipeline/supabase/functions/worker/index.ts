@@ -103,21 +103,14 @@ function clean(s: string): string {
 }
 
 async function doScreenshot(domain: string): Promise<{ ok: boolean; error?: string }> {
-  const filename = `${domain}.png`;
-
-  const { data: existing } = await supabase.storage.from("screenshots").createSignedUrl(filename, 60);
-  if (existing?.signedUrl) {
-    await supabase.from("domains").upsert({
-      domain,
-      screenshot_path: existing.signedUrl,
-      screenshot_source: "storage",
-      updated_at: new Date().toISOString(),
-    });
+  // Already cached? Check domains table (path may be .png/.gif/.jpg)
+  const { data: existingDom } = await supabase.from("domains").select("screenshot_path, screenshot_source").eq("domain", domain).maybeSingle();
+  if (existingDom?.screenshot_path && existingDom.screenshot_source === "storage") {
     return { ok: true };
   }
 
   try {
-    const resp = await fetch(`https://image.thum.io/get/width/600/https://${domain}`, {
+    const resp = await fetch(`https://image.thum.io/get/width/600/noanimate/https://${domain}`, {
       signal: AbortSignal.timeout(20_000),
     });
     if (!resp.ok) return { ok: false, error: `thum.io ${resp.status}` };
@@ -125,13 +118,18 @@ async function doScreenshot(domain: string): Promise<{ ok: boolean; error?: stri
     const buf = new Uint8Array(await resp.arrayBuffer());
     if (buf.length < 1000) return { ok: false, error: "screenshot too small" };
 
-    const { error: uploadErr } = await supabase.storage.from("screenshots").upload(filename, buf, {
-      contentType: "image/png",
+    // Detect real content type
+    const ct = (resp.headers.get("content-type") || "image/png").toLowerCase();
+    const ext = ct.includes("gif") ? "gif" : ct.includes("jpeg") || ct.includes("jpg") ? "jpg" : "png";
+    const realFilename = `${domain}.${ext}`;
+
+    const { error: uploadErr } = await supabase.storage.from("screenshots").upload(realFilename, buf, {
+      contentType: ct,
       upsert: true,
     });
     if (uploadErr) return { ok: false, error: `upload: ${uploadErr.message}` };
 
-    const { data: uploaded } = await supabase.storage.from("screenshots").createSignedUrl(filename, 60 * 60 * 24 * 365);
+    const { data: uploaded } = await supabase.storage.from("screenshots").createSignedUrl(realFilename, 60 * 60 * 24 * 365);
     await supabase.from("domains").upsert({
       domain,
       screenshot_path: uploaded?.signedUrl ?? "",

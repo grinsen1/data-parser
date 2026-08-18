@@ -1,6 +1,7 @@
 // Universal Parser worker
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
 import { decode as decodePng } from "https://esm.sh/@jsquash/png@3.0.1";
 import { encode as encodeJpeg } from "https://esm.sh/@jsquash/jpeg@1.2.0";
 
@@ -12,6 +13,14 @@ const supabase = createClient(
 const CRUX_KEY = Deno.env.get("CRUX_KEY") ?? "";
 const CF_API_TOKEN = Deno.env.get("CF_API_TOKEN") ?? "";
 const CF_ACCOUNT_ID = Deno.env.get("CF_ACCOUNT_ID") ?? "";
+
+const R2 = new AwsClient({
+  accessKeyId: Deno.env.get("R2_ACCESS_KEY_ID") ?? "",
+  secretAccessKey: Deno.env.get("R2_SECRET_ACCESS_KEY") ?? "",
+  region: "auto",
+});
+const R2_ENDPOINT = Deno.env.get("R2_ENDPOINT") ?? "";
+const R2_PUBLIC_URL = Deno.env.get("R2_PUBLIC_URL") ?? "";
 
 async function doRank(domain: string): Promise<{ ok: boolean; error?: string }> {
   const { data: ranks } = await supabase
@@ -115,7 +124,7 @@ function clean(s: string): string {
 
 async function doScreenshot(domain: string): Promise<{ ok: boolean; error?: string }> {
   const { data: existingDom } = await supabase.from("domains").select("screenshot_path, screenshot_source").eq("domain", domain).maybeSingle();
-  if (existingDom?.screenshot_path && existingDom.screenshot_source === "storage") {
+  if (existingDom?.screenshot_path && existingDom.screenshot_source === "r2") {
     return { ok: true };
   }
 
@@ -128,7 +137,7 @@ async function doScreenshot(domain: string): Promise<{ ok: boolean; error?: stri
     const buf = new Uint8Array(await resp.arrayBuffer());
     if (buf.length < 1000) return { ok: false, error: "screenshot too small" };
 
-    // Конвертация PNG → JPEG (качество 80) для лёгкого хранения/архива
+    // Конвертация PNG → JPEG (качество 80)
     let finalBuf = buf;
     let finalCt = "image/png";
     let ext = "png";
@@ -140,22 +149,26 @@ async function doScreenshot(domain: string): Promise<{ ok: boolean; error?: stri
       finalCt = "image/jpeg";
       ext = "jpg";
     } catch {
-      // не PNG (редкий случай) — сохраняем как есть
+      // не PNG — сохраняем как есть
     }
 
-    const realFilename = `${domain}.${ext}`;
+    const key = `${domain}.${ext}`;
 
-    const { error: uploadErr } = await supabase.storage.from("screenshots").upload(realFilename, finalBuf, {
-      contentType: finalCt,
-      upsert: true,
+    // Загрузка в R2 (S3 API)
+    const r2Resp = await R2.fetch(`${R2_ENDPOINT}/screenshots/${key}`, {
+      method: "PUT",
+      body: finalBuf,
+      headers: { "Content-Type": finalCt },
     });
-    if (uploadErr) return { ok: false, error: `upload: ${uploadErr.message}` };
+    if (r2Resp.status !== 200 && r2Resp.status !== 201) {
+      return { ok: false, error: `r2 upload ${r2Resp.status}` };
+    }
 
-    const { data: uploaded } = await supabase.storage.from("screenshots").createSignedUrl(realFilename, 60 * 60 * 24 * 365);
+    const publicUrl = `${R2_PUBLIC_URL}/${key}`;
     await supabase.from("domains").upsert({
       domain,
-      screenshot_path: uploaded?.signedUrl ?? "",
-      screenshot_source: "storage",
+      screenshot_path: publicUrl,
+      screenshot_source: "r2",
       updated_at: new Date().toISOString(),
     });
     return { ok: true };

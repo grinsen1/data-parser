@@ -80,7 +80,7 @@ def main():
             ).json()
             signed = sign.get("signedURL", "")
             if signed.startswith("/"):
-                signed = url + signed
+                signed = url + "/storage/v1" + signed
 
             # обновить путь
             requests.patch(

@@ -10,7 +10,7 @@
 <style>
   *{box-sizing:border-box}
   body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d0d0e;color:#f5f5f5;padding:16px}
-  .container{max-width:1000px;margin:0 auto}
+  .container{max-width:100%;margin:0 auto;padding:0 8px}
   h1{font-size:20px;margin:0 0 4px}
   .sub{color:#9d9da3;margin:0 0 16px;font-size:13px}
   .card{background:#19191b;border-radius:12px;padding:16px;margin-bottom:16px}
@@ -22,8 +22,8 @@
   .btn-back{background:transparent;color:#9d9da3;border:1px solid #2a2a2c}
   button:disabled{opacity:.4;cursor:default}
   table{width:100%;border-collapse:collapse}
-  th{text-align:left;color:#9d9da3;font-size:12px;padding:8px 6px;border-bottom:1px solid #2a2a2c}
-  td{padding:8px 6px;border-bottom:1px solid #1a1a1c;font-size:13px;vertical-align:middle}
+  th{text-align:left;color:#9d9da3;font-size:12px;padding:6px 8px;border-bottom:1px solid #2a2a2c;white-space:nowrap}
+  td{padding:6px 8px;border-bottom:1px solid #1a1a1c;font-size:13px;vertical-align:top;word-wrap:break-word}
   .tier{display:inline-block;width:24px;height:24px;line-height:24px;text-align:center;border-radius:6px;font-weight:700;font-size:11px}
   .t-A{background:#00c853;color:#000}.t-B{background:#64dd17;color:#000}
   .t-C{background:#ffd600;color:#000}.t-D{background:#ff9100;color:#000}
@@ -99,10 +99,23 @@
     <div class="card">
       <div id="progressBars" style="font-size:12px"></div>
     </div>
+    <div class="card" style="background:#141416;border-left:3px solid #f7bd19;padding:12px 16px">
+      <div style="font-size:11px;color:#9d9da3;line-height:1.6">
+        <b style="color:#f5f5f5">Скорость загрузки</b> — сколько миллисекунд рисуется главный контент (до 2500 хорошо, свыше 4000 — юзер уйдёт до показа рекламы)<br>
+        <b style="color:#f5f5f5">Отклик на клик</b> — сколько миллисекунд сайт реагирует на клик/тап (свыше 500 — тормозит)<br>
+        <b style="color:#f5f5f5">Сдвиг вёрстки</b> — насколько контент «скачет» при загрузке (свыше 0.25 — баннер уедет из виду, мисклики)<br>
+        <b style="color:#f5f5f5">Обновления</b> — доля людей, жмущих F5/обновить (свыше 15% — подозрение на автоперезагрузку/накрутку)<br>
+        <b style="color:#f5f5f5">Предзагрузка</b> — браузер заранее грузит страницу (свыше 3.5% — сайт сам накручивает загрузки)<br>
+        <b style="color:#f5f5f5">С телефона</b> — доля мобильных (свыше 90% — аномалия для Рунета)<br>
+        <b style="color:#f5f5f5">Гео</b> — доля РФ (клик — все страны), ⚠ = неевропейский хвост &gt;15% (покупной иностранный трафик)<br>
+        <b style="color:#f5f5f5">Тир</b> — A/B/C/D популярность по CrUX, E = нет живого трафика, «—» = не проверено<br>
+        <b style="color:#f5f5f5">Вердикт</b> (в XLSX): <span style="color:#64dd17">ok</span> — чисто · <span style="color:#ffd600">check</span> — проверить · <span style="color:#e53935">delete</span> — мусор/боты
+      </div>
+    </div>
     <div class="card" style="overflow-x:auto">
       <table>
         <thead><tr>
-          <th>Домен</th><th>Rank</th><th>Tier</th><th>Название</th><th>Тех</th><th>Гео</th><th>Скрин</th>
+          <th>Домен</th><th>Тир</th><th>Название</th><th>Скорость загрузки</th><th>Отклик на клик</th><th>Сдвиг вёрстки</th><th>Обновления</th><th>Предзагрузка</th><th>С телефона</th><th>Гео</th><th>Скрин</th>
         </tr></thead>
         <tbody id="batchTable"></tbody>
       </table>
@@ -423,31 +436,20 @@ function tierCell(d) {
     return '<span class="muted">—</span>';
   }
   const tier = tierOf(d.rank);
-  return `<span class="tier t-${tier}">${tier}</span>`;
+  const r = d.rank != null ? `<div style="font-size:10px;color:#9d9da3">#${d.rank}</div>` : '';
+  return `<span class="tier t-${tier}">${tier}</span>${r}`;
 }
 
 function bad(v) { return 'style="color:#e53935;font-weight:600"'; }
 function warn(v) { return 'style="color:#ff9100"'; }
+function num(v) { return v == null ? '<span class="muted">—</span>' : v; }
 
-function techCell(d) {
-  if (d.lcp_p75 == null && d.inp_p75 == null && d.cls_p75 == null && d.phone == null) {
-    return '<span class="muted">—</span>';
-  }
-  const parts = [];
-  const lcp = d.lcp_p75;
-  if (lcp != null) parts.push(`<span ${lcp > 4000 ? bad() : lcp > 2500 ? warn() : ''}>LCP ${lcp}ms</span>`);
-  const inp = d.inp_p75;
-  if (inp != null) parts.push(`<span ${inp > 500 ? bad() : ''}>INP ${inp}ms</span>`);
-  const cls = d.cls_p75;
-  if (cls != null) parts.push(`<span ${cls > 0.25 ? bad() : ''}>CLS ${cls}</span>`);
-  const reload = d.reload;
-  if (reload != null) parts.push(`<span ${reload > 0.15 ? bad() : ''}>reload ${Math.round(reload*100)}%</span>`);
-  const prerender = d.prerender;
-  if (prerender != null) parts.push(`<span ${prerender > 0.035 ? bad() : ''}>pre ${Math.round(prerender*100)}%</span>`);
-  const phone = d.phone;
-  if (phone != null) parts.push(`<span ${phone > 0.9 ? bad() : ''}>phone ${Math.round(phone*100)}%</span>`);
-  return parts.join(' · ');
-}
+function lcpCell(d) { const v = d.lcp_p75; return v == null ? num(null) : `<span ${v > 4000 ? bad() : v > 2500 ? warn() : ''}>${v}мс</span>`; }
+function inpCell(d) { const v = d.inp_p75; return v == null ? num(null) : `<span ${v > 500 ? bad() : ''}>${v}мс</span>`; }
+function clsCell(d) { const v = d.cls_p75; return v == null ? num(null) : `<span ${v > 0.25 ? bad() : ''}>${v}</span>`; }
+function reloadCell(d) { const v = d.reload; return v == null ? num(null) : `<span ${v > 0.15 ? bad() : ''}>${Math.round(v*100)}%</span>`; }
+function prerenderCell(d) { const v = d.prerender; return v == null ? num(null) : `<span ${v > 0.035 ? bad() : ''}>${Math.round(v*100)}%</span>`; }
+function phoneCell(d) { const v = d.phone; return v == null ? num(null) : `<span ${v > 0.9 ? bad() : ''}>${Math.round(v*100)}%</span>`; }
 
 function geoCell(d) {
   if (d.ru_share == null) return '<span class="muted">—</span>';
@@ -504,7 +506,7 @@ function renderBatch(doms) {
 
   const tbody = document.getElementById("batchTable");
   if (!doms.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="muted">Обработка... откройте позже</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="muted">Обработка... откройте позже</td></tr>';
     return;
   }
 
@@ -525,10 +527,14 @@ function renderBatch(doms) {
 
     return `<tr>
       <td><strong>${d.domain}</strong>${cat}</td>
-      <td>${d.rank ?? '<span class="muted">—</span>'}</td>
       <td>${tierCell(d)}</td>
       <td>${name}</td>
-      <td>${techCell(d)}</td>
+      <td>${lcpCell(d)}</td>
+      <td>${inpCell(d)}</td>
+      <td>${clsCell(d)}</td>
+      <td>${reloadCell(d)}</td>
+      <td>${prerenderCell(d)}</td>
+      <td>${phoneCell(d)}</td>
       <td>${geoCell(d)}</td>
       <td>${ss}</td>
     </tr>`;

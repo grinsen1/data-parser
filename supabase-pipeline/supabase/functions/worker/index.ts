@@ -259,6 +259,7 @@ async function doGeo(domain: string): Promise<{ ok: boolean; error?: string }> {
       top_country,
       foreign_tail: Math.round(foreign_tail * 100) / 100,
       geo_verdict,
+      geo_countries: top,
       raw: json,
       checked_at: new Date().toISOString(),
     });

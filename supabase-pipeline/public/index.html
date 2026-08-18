@@ -128,6 +128,7 @@ let accessToken = null;   // JWT анонимного пользователя
 let currentBatchId = null;
 let pollTimer = null;
 const domCache = {};      // кэш доменов для модалки гео
+let lastRenderKey = null; // ключ последних данных — чтобы не перерисовывать без изменений
 
 // ============================================================
 // Auth: анонимный вход (с refresh_token, чтобы не плодить юзеров)
@@ -272,6 +273,7 @@ async function loadBatches() {
 // ============================================================
 async function openBatch(id) {
   currentBatchId = id;
+  lastRenderKey = null;
   document.getElementById("viewList").classList.add("hidden");
   document.getElementById("viewBatch").classList.remove("hidden");
 
@@ -316,6 +318,11 @@ async function refreshBatch() {
       body: JSON.stringify({ p_batch_id: currentBatchId }),
     });
     const prog = await progResp.json();
+
+    // не перерисовываем, если данные не изменились
+    const key = JSON.stringify(prog) + "|" + JSON.stringify(doms);
+    if (key === lastRenderKey) return;
+    lastRenderKey = key;
 
     renderProgress(prog);
     renderBatch(doms);

@@ -490,7 +490,7 @@ function renderBatch(doms) {
         : '<span class="muted">—</span>';
 
     const ss = d.screenshot_path
-      ? `<div class="ss-lazy" data-src="${d.screenshot_path}" onclick="loadShot(this)" title="Клик — загрузить скриншот">▶</div>`
+      ? `<img class="ss-img" src="${d.screenshot_path}" loading="lazy" alt="">`
       : '<span class="muted">—</span>';
 
     return `<tr>
@@ -503,18 +503,6 @@ function renderBatch(doms) {
       <td>${ss}</td>
     </tr>`;
   }).join("");
-}
-
-function loadShot(el) {
-  const src = el.dataset.src;
-  if (!src) return;
-  const img = document.createElement("img");
-  img.className = "ss-img";
-  img.src = src;
-  img.onerror = () => { el.textContent = "✕"; el.style.cursor = "default"; };
-  el.innerHTML = "";
-  el.appendChild(img);
-  el.onclick = null;
 }
 
 // ============================================================

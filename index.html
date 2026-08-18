@@ -142,6 +142,18 @@
   </div>
 </div>
 
+<!-- Модальное окно ZIP -->
+<div id="zipModal" style="position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:100">
+  <div style="background:#19191b;border-radius:12px;padding:24px;width:90%;max-width:380px">
+    <strong>Формирую архив</strong>
+    <div style="margin:16px 0;font-size:32px;font-weight:700" id="zipCount">0 / 0</div>
+    <div style="height:8px;background:#242426;border-radius:4px;overflow:hidden">
+      <div id="zipBar" style="height:100%;width:0%;background:#f7bd19;transition:width .2s"></div>
+    </div>
+    <div style="margin-top:12px;color:#9d9da3;font-size:12px" id="zipStatus">Скачиваю скриншоты...</div>
+  </div>
+</div>
+
 <script>
 const SURL = "https://dcrmfvfuyexjdygbupwr.supabase.co/";
 const ANON = "sb_publishable_POvIuGKyDKNEjBvO01ykhQ_5rW5iEIi";
@@ -681,7 +693,12 @@ async function exportScreenshots() {
   const withScreenshot = doms.filter(d => d.screenshot_path);
   if (!withScreenshot.length) { alert("Нет скриншотов"); return; }
 
-  showStatus("run", `Скачиваю ${withScreenshot.length} скриншотов...`);
+  const total = withScreenshot.length;
+  document.getElementById("zipModal").style.display = "flex";
+  document.getElementById("zipCount").textContent = `0 / ${total}`;
+  document.getElementById("zipBar").style.width = "0%";
+  document.getElementById("zipStatus").textContent = "Скачиваю скриншоты...";
+
   const zip = new JSZip();
   let done = 0;
   const CONC = 20;
@@ -697,15 +714,21 @@ async function exportScreenshots() {
     }));
     for (const p of parts) if (p) zip.file(p.name, p.blob);
     done += batch.length;
-    showStatus("run", `Скачано ${done}/${withScreenshot.length}`);
+    document.getElementById("zipCount").textContent = `${done} / ${total}`;
+    document.getElementById("zipBar").style.width = `${Math.round(done / total * 100)}%`;
   }
 
-  const content = await zip.generateAsync({ type: "blob" });
+  document.getElementById("zipStatus").textContent = "Упаковываю...";
+  const content = await zip.generateAsync({ type: "blob" }, (meta) => {
+    document.getElementById("zipStatus").textContent = `Упаковка: ${meta.percent.toFixed(0)}%`;
+  });
+  document.getElementById("zipModal").style.display = "none";
+
   const a = document.createElement("a");
   a.href = URL.createObjectURL(content);
   a.download = `screenshots_${currentBatchId}.zip`;
   a.click();
-  showStatus("ok", `Архив готов (${withScreenshot.length} файлов)`);
+  showStatus("ok", `Архив готов (${total} файлов)`);
 }
 
 function showStatus(type, text) {

@@ -48,7 +48,9 @@ async function doMeta(domain: string): Promise<{ ok: boolean; error?: string }> 
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36" },
     });
     if (!resp.ok) {
-      return { ok: false, error: `HTTP ${resp.status}` };
+      const err = `HTTP ${resp.status}`;
+      await supabase.from("domains").upsert({ domain, meta_error: err, updated_at: new Date().toISOString() });
+      return { ok: false, error: err };
     }
 
     const reader = resp.body!.getReader();
@@ -80,11 +82,14 @@ async function doMeta(domain: string): Promise<{ ok: boolean; error?: string }> 
       domain,
       title,
       description: desc,
+      meta_error: null,
       updated_at: new Date().toISOString(),
     });
     return { ok: true };
   } catch (e) {
-    return { ok: false, error: String(e) };
+    const err = String(e);
+    await supabase.from("domains").upsert({ domain, meta_error: err, updated_at: new Date().toISOString() });
+    return { ok: false, error: err };
   }
 }
 

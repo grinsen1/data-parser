@@ -464,7 +464,11 @@ function renderBatch(doms) {
       ? `<br><span class="muted" style="font-size:11px">${d.category}</span>`
       : '';
 
-    const name = (d.title || "").substring(0, 50) || '<span class="muted">—</span>';
+    const name = d.title
+      ? d.title.substring(0, 50)
+      : d.meta_error
+        ? `<span style="color:#e53935;font-size:11px">dead: ${d.meta_error.substring(0, 70)}</span>`
+        : '<span class="muted">—</span>';
 
     const ss = d.screenshot_path
       ? `<img class="ss-img" src="${d.screenshot_path}" loading="lazy" alt="">`

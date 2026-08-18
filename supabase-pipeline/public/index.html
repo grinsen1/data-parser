@@ -81,7 +81,7 @@
     <div class="card" style="overflow-x:auto">
       <table>
         <thead><tr>
-          <th>Домен</th><th>Rank</th><th>Tier</th><th>Название</th><th>Скрин</th>
+          <th>Домен</th><th>Rank</th><th>Tier</th><th>Название</th><th>Тех</th><th>Гео</th><th>Скрин</th>
         </tr></thead>
         <tbody id="batchTable"></tbody>
       </table>
@@ -297,7 +297,7 @@ function tierOf(rank) {
 
 function renderBatch(doms, tasks, totalDomains) {
   const done = tasks.filter(t => t.state === "done").length;
-  const total = totalDomains * 3;
+  const total = totalDomains * 6;
   const pct = total ? Math.round(done / total * 100) : 0;
   document.getElementById("bProgress").style.width = pct + "%";
   document.getElementById("bProgressText").textContent = `${done}/${total} задач готово (${pct}%)`;
@@ -313,16 +313,34 @@ function renderBatch(doms, tasks, totalDomains) {
 
   tbody.innerHTML = doms.map(d => {
     const tier = tierOf(d.rank);
-    const name = (d.title || "").substring(0, 60) || '<span class="muted">—</span>';
-    const desc = (d.description || "").substring(0, 120);
+    const name = (d.title || "").substring(0, 50) || '<span class="muted">—</span>';
+    const cat = d.category
+      ? `<br><span class="muted" style="font-size:11px">${d.category}${d.super_category ? ' / ' + d.super_category : ''}</span>`
+      : '';
+
+    // техкачество
+    const lcp = d.lcp_p75 != null ? `${d.lcp_p75}ms` : '—';
+    const phone = d.phone != null ? `phone ${Math.round(d.phone*100)}%` : '';
+    const tech = `${lcp}<br><span class="muted" style="font-size:11px">${phone}</span>`;
+
+    // гео
+    const foreign = (d.foreign_tail ?? 0) > 15 && d.geo_verdict === 'ok';
+    const ru = d.ru_share != null ? `${Math.round(d.ru_share*10)/10}%` : '—';
+    const geo = `${ru}${foreign ? ' <span style="color:#e53935;font-weight:600">⚠</span>' : ''}<br><span class="muted" style="font-size:11px">${d.top_country || ''}${d.geo_verdict === 'unknown' ? ' (мало данных)' : ''}</span>`;
+
     const ss = d.screenshot_path
       ? `<img class="ss-img" src="${d.screenshot_path}" loading="lazy" alt="">`
       : '<span class="muted">—</span>';
+
+    const foreignTag = foreign ? `<span class="rm-tag">ино</span>` : '';
+
     return `<tr>
-      <td><strong>${d.domain}</strong></td>
+      <td><strong>${d.domain}</strong>${foreignTag}${cat}</td>
       <td>${d.rank ?? '<span class="muted">—</span>'}</td>
       <td><span class="tier t-${tier}">${tier}</span></td>
-      <td>${name}${desc ? `<br><span class="muted" style="font-size:11px">${desc}</span>` : ""}</td>
+      <td>${name}</td>
+      <td>${tech}</td>
+      <td>${geo}</td>
       <td>${ss}</td>
     </tr>`;
   }).join("");

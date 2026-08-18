@@ -7,6 +7,10 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
 );
 
+const CRUX_KEY = Deno.env.get("CRUX_KEY") ?? "";
+const CF_API_TOKEN = Deno.env.get("CF_API_TOKEN") ?? "";
+const CF_ACCOUNT_ID = Deno.env.get("CF_ACCOUNT_ID") ?? "";
+
 async function doRank(domain: string): Promise<{ ok: boolean; error?: string }> {
   const { data: ranks } = await supabase
     .from("crux_ranks")
@@ -103,7 +107,6 @@ function clean(s: string): string {
 }
 
 async function doScreenshot(domain: string): Promise<{ ok: boolean; error?: string }> {
-  // Already cached? Check domains table (path may be .png/.gif/.jpg)
   const { data: existingDom } = await supabase.from("domains").select("screenshot_path, screenshot_source").eq("domain", domain).maybeSingle();
   if (existingDom?.screenshot_path && existingDom.screenshot_source === "storage") {
     return { ok: true };
@@ -118,7 +121,6 @@ async function doScreenshot(domain: string): Promise<{ ok: boolean; error?: stri
     const buf = new Uint8Array(await resp.arrayBuffer());
     if (buf.length < 1000) return { ok: false, error: "screenshot too small" };
 
-    // Detect real content type
     const ct = (resp.headers.get("content-type") || "image/png").toLowerCase();
     const ext = ct.includes("gif") ? "gif" : ct.includes("jpeg") || ct.includes("jpg") ? "jpg" : "png";
     const realFilename = `${domain}.${ext}`;
@@ -143,10 +145,174 @@ async function doScreenshot(domain: string): Promise<{ ok: boolean; error?: stri
   }
 }
 
+// ============================================================
+// CrUX: поведение + техкачество
+// ============================================================
+async function doCrux(domain: string): Promise<{ ok: boolean; error?: string }> {
+  const variants = [
+    `https://${domain}`,
+    `https://www.${domain}`,
+    `http://${domain}`,
+    `http://www.${domain}`,
+  ];
+
+  let found = null;
+  for (const origin of variants) {
+    const url = `https://chromeuxreport.googleapis.com/v1/records:queryRecord?key=${CRUX_KEY}`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ origin }),
+      signal: AbortSignal.timeout(20_000),
+    });
+
+    if (resp.status === 404) continue; // нет такой записи — пробуем следующий вариант
+
+    if (resp.status === 429 || resp.status >= 500) {
+      // временный сбой — повторяем тот же вариант
+      await new Promise(r => setTimeout(r, 1500));
+      const retry = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ origin }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (retry.status === 404) continue;
+      if (retry.ok) { found = { origin, data: await retry.json() }; break; }
+      continue;
+    }
+
+    if (resp.ok) { found = { origin, data: await resp.json() }; break; }
+  }
+
+  if (!found) {
+    await supabase.from("domains").upsert({
+      domain,
+      crux_variant: "not_found",
+      checked_at: new Date().toISOString(),
+    });
+    return { ok: true };
+  }
+
+  const m = found.data?.record?.metrics ?? {};
+  const lcp = m.largest_contentful_paint?.percentiles?.p75 ?? null;
+  const inp = m.interaction_to_next_paint?.percentiles?.p75 ?? null;
+  const cls = m.cumulative_layout_shift?.percentiles?.p75 ?? null;
+
+  const nav = m.navigation_types?.fractions ?? {};
+  const ff = m.form_factors?.fractions ?? {};
+  const reload = nav.reload ?? null;
+  const bf_sum = (nav.back_forward ?? 0) + (nav.back_forward_cache ?? 0);
+  const navigate = nav.navigate ?? null;
+  const prerender = nav.prerender ?? null;
+  const phone = ff.phone ?? null;
+
+  await supabase.from("domains").upsert({
+    domain,
+    lcp_p75: lcp,
+    inp_p75: inp,
+    cls_p75: cls,
+    reload,
+    bf_sum,
+    navigate,
+    prerender,
+    phone,
+    crux_variant: found.origin,
+    raw: found.data,
+    checked_at: new Date().toISOString(),
+  });
+  return { ok: true };
+}
+
+// ============================================================
+// Cloudflare Radar DNS: география
+// ============================================================
+const NON_EU = ["IN", "VN", "BD", "PK", "PH", "ID", "NG", "EG"];
+
+async function doGeo(domain: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const url = `https://api.cloudflare.com/client/v4/radar/dns/top/locations?domain=${domain}&dateRange=28d&limit=20&format=JSON`;
+    const resp = await fetch(url, {
+      headers: { Authorization: `Bearer ${CF_API_TOKEN}` },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!resp.ok) return { ok: false, error: `CF ${resp.status}` };
+
+    const json = await resp.json();
+    const top = json?.result?.top_0 ?? [];
+
+    let ru_share = 0, ru_rank = null, top_country = "", foreign_tail = 0;
+    if (top.length > 0) {
+      top_country = top[0].clientCountryAlpha2;
+      top.forEach((x: any, i: number) => {
+        const v = parseFloat(x.value);
+        if (x.clientCountryAlpha2 === "RU") { ru_share = v; ru_rank = i + 1; }
+        if (NON_EU.includes(x.clientCountryAlpha2)) foreign_tail += v;
+      });
+    }
+    const geo_verdict = top.length <= 2 ? "unknown" : "ok";
+
+    await supabase.from("domains").upsert({
+      domain,
+      ru_share,
+      ru_rank,
+      top_country,
+      foreign_tail: Math.round(foreign_tail * 100) / 100,
+      geo_verdict,
+      raw: json,
+      checked_at: new Date().toISOString(),
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+// ============================================================
+// Cloudflare Intel: категория (bulk, обрабатывается пачкой)
+// ============================================================
+async function doIntel(domains: string[]): Promise<{ ok: boolean; error?: string }> {
+  if (!domains.length) return { ok: true };
+
+  try {
+    const params = domains.map(d => `domain=${encodeURIComponent(d)}`).join("&");
+    const url = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/intel/domain/bulk?${params}`;
+    const resp = await fetch(url, {
+      headers: { Authorization: `Bearer ${CF_API_TOKEN}` },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!resp.ok) return { ok: false, error: `CF intel ${resp.status}` };
+
+    const json = await resp.json();
+    const results = json?.result ?? [];
+
+    for (const item of results) {
+      const dom = item.domain;
+      let category = "", super_category = "";
+      for (const c of item.content_categories ?? []) {
+        if (c.super_category_id != null && !category) category = c.name;
+        if (c.super_category_id == null && !super_category) super_category = c.name;
+      }
+      await supabase.from("domains").upsert({
+        domain: dom,
+        category,
+        super_category,
+        checked_at: new Date().toISOString(),
+      });
+    }
+
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
 const HANDLERS: Record<string, (d: string) => Promise<{ ok: boolean; error?: string }>> = {
   rank: doRank,
   meta: doMeta,
   screenshot: doScreenshot,
+  crux: doCrux,
+  geo: doGeo,
 };
 
 serve(async (req: Request) => {
@@ -168,12 +334,29 @@ serve(async (req: Request) => {
     const { data: tasks, error } = await supabase.rpc("claim_tasks", {
       p_kind: kind,
       p_limit: limit,
-      p_lease_sec: 120,
+      p_lease_sec: 180,
     });
 
     if (error) throw new Error(error.message);
     if (!tasks || tasks.length === 0) {
       return json({ ok: true, processed: 0, message: "no pending tasks" });
+    }
+
+    // intel — bulk, отдельная ветка
+    if (kind === "intel") {
+      const domains = tasks.map((t: any) => t.domain);
+      const result = await doIntel(domains);
+      if (result.ok) {
+        for (const task of tasks) {
+          await supabase.rpc("complete_task", { p_domain: task.domain, p_kind: "intel" });
+        }
+        return json({ ok: true, kind, processed: tasks.length, done: tasks.length, failed: 0 });
+      } else {
+        for (const task of tasks) {
+          await supabase.rpc("fail_task", { p_domain: task.domain, p_kind: "intel", p_error: result.error ?? "unknown" });
+        }
+        return json({ ok: true, kind, processed: tasks.length, done: 0, failed: tasks.length });
+      }
     }
 
     const handler = HANDLERS[kind];

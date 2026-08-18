@@ -218,7 +218,7 @@ async function doCrux(domain: string): Promise<{ ok: boolean; error?: string }> 
     prerender,
     phone,
     crux_variant: found.origin,
-    raw: found.data,
+    crux_raw: found.data,
     checked_at: new Date().toISOString(),
   });
   return { ok: true };
@@ -260,7 +260,7 @@ async function doGeo(domain: string): Promise<{ ok: boolean; error?: string }> {
       foreign_tail: Math.round(foreign_tail * 100) / 100,
       geo_verdict,
       geo_countries: top,
-      raw: json,
+      geo_raw: json,
       checked_at: new Date().toISOString(),
     });
     return { ok: true };
@@ -289,15 +289,17 @@ async function doIntel(domains: string[]): Promise<{ ok: boolean; error?: string
 
     for (const item of results) {
       const dom = item.domain;
-      let category = "", super_category = "";
-      for (const c of item.content_categories ?? []) {
-        if (c.super_category_id != null && !category) category = c.name;
-        if (c.super_category_id == null && !super_category) super_category = c.name;
-      }
+      const cats = item.content_categories ?? [];
+      // конкретные (с super_category_id) и родительские (без)
+      const concrete = cats.filter((c: any) => c.super_category_id != null).map((c: any) => c.name);
+      const parents = [...new Set(cats.filter((c: any) => c.super_category_id == null).map((c: any) => c.name))];
+
       await supabase.from("domains").upsert({
         domain: dom,
-        category,
-        super_category,
+        category: concrete.join(", "),
+        super_category: parents.join(", "),
+        categories: cats,
+        intel_raw: item,
         checked_at: new Date().toISOString(),
       });
     }

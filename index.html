@@ -289,32 +289,35 @@ async function openBatch(id) {
 async function refreshBatch() {
   if (!currentBatchId) return;
   try {
-    // домены задачи
-    const itemsResp = await fetch(
-      `${SURL.replace(/\/$/, "")}/rest/v1/batch_items?batch_id=eq.${currentBatchId}&select=domain`,
-      { headers: authHeaders() }
-    );
-    const items = await itemsResp.json();
-    const domains = items.map(i => i.domain);
+    // количество доменов задачи
+    const cntResp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/batch_domains_count`, {
+      method: "POST", headers: authHeaders(),
+      body: JSON.stringify({ p_batch_id: currentBatchId }),
+    });
+    const totalCount = parseInt(await cntResp.text());
 
-    if (!domains.length) return;
+    if (!totalCount) return;
 
-    // результаты из глобального кэша
-    const domResp = await fetch(
-      `${SURL.replace(/\/$/, "")}/rest/v1/domains?domain=in.(${domains.join(",")})&select=*`,
-      { headers: authHeaders() }
-    );
-    const doms = await domResp.json();
+    // домены пагинацией (обход лимита 1000)
+    const doms = [];
+    const PAGE = 500;
+    for (let offset = 0; offset < totalCount; offset += PAGE) {
+      const r = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/batch_domains`, {
+        method: "POST", headers: authHeaders(),
+        body: JSON.stringify({ p_batch_id: currentBatchId, p_offset: offset, p_limit: PAGE }),
+      });
+      const page = await r.json();
+      doms.push(...(page || []));
+    }
 
-    // прогресс через batch_progress (не SELECT — там лимит 1000 строк)
+    // прогресс через batch_progress
     const progResp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/batch_progress`, {
-      method: "POST",
-      headers: authHeaders(),
+      method: "POST", headers: authHeaders(),
       body: JSON.stringify({ p_batch_id: currentBatchId }),
     });
     const prog = await progResp.json();
 
-    renderProgress(prog, domains.length);
+    renderProgress(prog);
     renderBatch(doms);
   } catch (e) {
     console.error(e);
@@ -330,14 +333,14 @@ const KIND_LABELS = {
   screenshot: "Скриншоты",
 };
 
-function renderProgress(prog, totalDomains) {
+function renderProgress(prog) {
   const el = document.getElementById("progressBars");
   if (!prog || !prog.length) {
     el.innerHTML = '<span class="muted">Прогресс пока недоступен</span>';
     return;
   }
 
-  // агрегируем по kind: done + failed + pending
+  // агрегируем по kind: total и done считаем из batch_progress (не из domains.length)
   const byKind = {};
   for (const row of prog) {
     if (!byKind[row.kind]) byKind[row.kind] = { done: 0, total: 0 };
@@ -349,7 +352,7 @@ function renderProgress(prog, totalDomains) {
   el.innerHTML = order.map(kind => {
     const k = byKind[kind];
     if (!k) return "";
-    const total = totalDomains; // ожидаем 1 задача на домен на kind
+    const total = k.total;
     const done = k.done;
     const pct = total ? Math.round(done / total * 100) : 0;
     const color = pct >= 100 ? "#64dd17" : "#f7bd19";

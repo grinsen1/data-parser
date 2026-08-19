@@ -170,52 +170,17 @@ let sortAsc = true;
 // ============================================================
 // Auth: анонимный вход (с refresh_token, чтобы не плодить юзеров)
 // ============================================================
+function authHeaders() {
+  // без JWT — только publishable ключ (прокси режет /auth/v1/* и Authorization)
+  return {
+    "Content-Type": "application/json",
+    apikey: ANON,
+  };
+}
+
 async function ensureAuth() {
-  // 1. accessToken в памяти валиден?
-  if (accessToken) {
-    try {
-      const r = await fetch(`${SURL.replace(/\/$/, "")}/auth/v1/user`, {
-        headers: { apikey: ANON, Authorization: `Bearer ${accessToken}` },
-      });
-      if (r.ok) return;
-    } catch {}
-  }
-
-  // 2. пробуем refresh из localStorage
-  try {
-    const session = localStorage.getItem("sb_session");
-    if (session) {
-      const s = JSON.parse(session);
-      if (s.refresh_token) {
-        const r = await fetch(`${SURL.replace(/\/$/, "")}/auth/v1/token?grant_type=refresh_token`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", apikey: ANON },
-          body: JSON.stringify({ refresh_token: s.refresh_token }),
-        });
-        if (r.ok) {
-          const data = await r.json();
-          accessToken = data.access_token;
-          localStorage.setItem("sb_session", JSON.stringify({ ...s, ...data }));
-          return;
-        }
-      }
-    }
-  } catch {}
-
-  // 3. новый аноним
-  try {
-    const r = await fetch(`${SURL.replace(/\/$/, "")}/auth/v1/signup`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: ANON },
-      body: JSON.stringify({}),
-    });
-    if (r.ok) {
-      const data = await r.json();
-      accessToken = data.access_token;
-      localStorage.setItem("sb_session", JSON.stringify(data));
-      return;
-    }
-  } catch {}
+  // заглушка: авторизация отключена, работаем на publishable ключе
+  return;
 }
 
 function authHeaders() {

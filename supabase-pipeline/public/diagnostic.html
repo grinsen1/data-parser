@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Диагностика прокси</title>
+<style>
+  body{font-family:monospace;background:#0d0d0e;color:#f5f5f5;padding:20px}
+  .row{margin:6px 0;padding:8px;border-radius:6px;background:#19191b}
+  .ok{color:#64dd17}.fail{color:#e53935}.pend{color:#ffd600}
+  button{padding:10px 20px;background:#f7bd19;color:#000;border:none;border-radius:8px;font-weight:700;cursor:pointer}
+</style>
+</head>
+<body>
+<h3>Диагностика доступа к Supabase</h3>
+<button onclick="runAll()">Запустить тесты</button>
+<div id="out" style="margin-top:16px"></div>
+
+<script>
+const P='sb_publishable_POvIuGKyDKNEjBvO01ykhQ_5rW5iEIi';
+const SURL='https://dcrmfvfuyexjdygbupwr.supabase.co';
+const out=document.getElementById('out');
+function log(name, cls, detail){
+  const d=document.createElement('div');
+  d.className='row';
+  d.innerHTML=`<span class="${cls}">${name}</span> ${detail}`;
+  out.appendChild(d);
+}
+async function test(name, fn){
+  log(name, 'pend', '...');
+  const t0=performance.now();
+  try{
+    const r=await fn();
+    const t=Math.round(performance.now()-t0);
+    log(name, r.ok?'ok':'fail', `→ ${r.status} (${t}мс)`);
+  }catch(e){
+    const t=Math.round(performance.now()-t0);
+    log(name, 'fail', `→ ERR ${e.message} (${t}мс)`);
+  }
+}
+async function runAll(){
+  out.innerHTML='';
+  await test('1. GET table (domains)', async()=>{
+    const r=await fetch(`${SURL}/rest/v1/domains?select=domain&limit=2`,{headers:{apikey:P}});
+    return {ok:r.ok, status:r.status};
+  });
+  await test('2. GET RPC (batch_domains_count)', async()=>{
+    const r=await fetch(`${SURL}/rest/v1/rpc/batch_domains_count?p_batch_id=10`,{headers:{apikey:P}});
+    return {ok:r.ok, status:r.status};
+  });
+  await test('3. POST RPC (batch_domains_count)', async()=>{
+    const r=await fetch(`${SURL}/rest/v1/rpc/batch_domains_count`,{method:'POST',headers:{apikey:P,'Content-Type':'application/json'},body:'{"p_batch_id":10}'});
+    return {ok:r.ok, status:r.status};
+  });
+  await test('4. POST table insert (batches)', async()=>{
+    const r=await fetch(`${SURL}/rest/v1/batches`,{method:'POST',headers:{apikey:P,'Content-Type':'application/json','Prefer':'return=minimal'},body:'{"name":"diag-test"}'});
+    return {ok:r.ok, status:r.status};
+  });
+  await test('5. POST Edge Function (workr)', async()=>{
+    const r=await fetch(`${SURL}/functions/v1/workr`,{method:'POST',headers:{apikey:P,'Content-Type':'application/json'},body:'{"kind":"rank","limit":1}'});
+    return {ok:r.ok, status:r.status};
+  });
+  log('ГОТОВО', 'ok', '— скинь скрин этого списка');
+}
+</script>
+</body>
+</html>

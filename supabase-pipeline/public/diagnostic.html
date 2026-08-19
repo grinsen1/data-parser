@@ -39,27 +39,25 @@ async function test(name, fn){
 }
 async function runAll(){
   out.innerHTML='';
+  const T=10000;
+  const withTimeout=(u,o)=>fetch(u,{...o,signal:AbortSignal.timeout(T)});
   await test('1. GET table (domains)', async()=>{
-    const r=await fetch(`${SURL}/rest/v1/domains?select=domain&limit=2`,{headers:{apikey:P}});
+    const r=await withTimeout(`${SURL}/rest/v1/domains?select=domain&limit=2`,{headers:{apikey:P}});
     return {ok:r.ok, status:r.status};
   });
   await test('2. GET RPC (batch_domains_count)', async()=>{
-    const r=await fetch(`${SURL}/rest/v1/rpc/batch_domains_count?p_batch_id=10`,{headers:{apikey:P}});
+    const r=await withTimeout(`${SURL}/rest/v1/rpc/batch_domains_count?p_batch_id=10`,{headers:{apikey:P}});
     return {ok:r.ok, status:r.status};
   });
-  await test('3. POST RPC (batch_domains_count)', async()=>{
-    const r=await fetch(`${SURL}/rest/v1/rpc/batch_domains_count`,{method:'POST',headers:{apikey:P,'Content-Type':'application/json'},body:'{"p_batch_id":10}'});
+  await test('3. POST table insert (batches)', async()=>{
+    const r=await withTimeout(`${SURL}/rest/v1/batches`,{method:'POST',headers:{apikey:P,'Content-Type':'application/json','Prefer':'return=minimal'},body:'{"name":"diag-test-'+Date.now()+'}"'});
     return {ok:r.ok, status:r.status};
   });
-  await test('4. POST table insert (batches)', async()=>{
-    const r=await fetch(`${SURL}/rest/v1/batches`,{method:'POST',headers:{apikey:P,'Content-Type':'application/json','Prefer':'return=minimal'},body:'{"name":"diag-test"}'});
+  await test('4. POST Edge Function (workr)', async()=>{
+    const r=await withTimeout(`${SURL}/functions/v1/workr`,{method:'POST',headers:{apikey:P,'Content-Type':'application/json'},body:'{"kind":"rank","limit":1}'});
     return {ok:r.ok, status:r.status};
   });
-  await test('5. POST Edge Function (workr)', async()=>{
-    const r=await fetch(`${SURL}/functions/v1/workr`,{method:'POST',headers:{apikey:P,'Content-Type':'application/json'},body:'{"kind":"rank","limit":1}'});
-    return {ok:r.ok, status:r.status};
-  });
-  log('ГОТОВО', 'ok', '— скинь скрин этого списка');
+  log('ГОТОВО', 'ok', '— скинь скрин');
 }
 </script>
 </body>

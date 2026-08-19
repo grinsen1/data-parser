@@ -158,7 +158,6 @@
 const SURL = "https://dcrmfvfuyexjdygbupwr.supabase.co/";
 const ANON = "sb_publishable_POvIuGKyDKNEjBvO01ykhQ_5rW5iEIi";
 
-let accessToken = null;   // JWT анонимного пользователя
 let currentBatchId = null;
 let pollTimer = null;
 const domCache = {};      // кэш доменов для модалки гео
@@ -168,27 +167,57 @@ let sortField = null;
 let sortAsc = true;
 
 // ============================================================
-// Auth: анонимный вход (с refresh_token, чтобы не плодить юзеров)
+// Сетевой слой: все запросы через Edge Function workr
+// (обходит корпоративный прокси, который нестабильно режет соединения)
+// Ретрай "другим способом": уникальный _t (свежее соединение),
+// таймаут 10 сек, а для чтения — fallback с POST на GET.
 // ============================================================
-function authHeaders() {
-  // без JWT — только publishable ключ (прокси режет /auth/v1/* и Authorization)
-  return {
-    "Content-Type": "application/json",
-    apikey: ANON,
-  };
+const FN = SURL.replace(/\/$/, "") + "/functions/v1/workr";
+
+async function fetchOnce(url, opts) {
+  const sep = url.includes("?") ? "&" : "?";
+  const finalUrl = url + sep + "_t=" + Date.now() + "_" + Math.random().toString(36).slice(2);
+  return fetch(finalUrl, { ...opts, signal: AbortSignal.timeout(10000) });
 }
 
-async function ensureAuth() {
-  // заглушка: авторизация отключена, работаем на publishable ключе
-  return;
+async function apiFetch(url, opts = {}, retries = 2) {
+  let lastErr;
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await fetchOnce(url, opts);
+    } catch (e) {
+      lastErr = e;
+      if (i < retries) await new Promise(r => setTimeout(r, 500 * (i + 1)));
+    }
+  }
+  throw lastErr;
 }
 
-function authHeaders() {
-  return {
-    "Content-Type": "application/json",
-    apikey: ANON,
-    Authorization: `Bearer ${accessToken}`,
-  };
+function parseWorkr(resp) {
+  return resp.text().then(text => {
+    let data;
+    try { data = JSON.parse(text); } catch { data = { ok: false, error: text }; }
+    if (!resp.ok || data.ok === false) throw new Error(data.error || `HTTP ${resp.status}`);
+    return data;
+  });
+}
+
+const READ_ACTIONS = ["list", "read"];
+
+async function workr(action, payload = {}) {
+  const headers = { "Content-Type": "application/json", apikey: ANON };
+  const postBody = JSON.stringify({ action, ...payload });
+
+  try {
+    return await parseWorkr(await apiFetch(FN, { method: "POST", headers, body: postBody }, 2));
+  } catch (e) {
+    if (!READ_ACTIONS.includes(action)) throw e;
+  }
+
+  // чтение — другой способ: GET с query-параметрами
+  const qs = new URLSearchParams({ action });
+  if (payload.batch_id != null) qs.set("batch_id", payload.batch_id);
+  return await parseWorkr(await apiFetch(FN + "?" + qs.toString(), { method: "GET", headers }, 2));
 }
 
 // ============================================================
@@ -205,32 +234,10 @@ async function createBatch() {
   showStatus("run", "Создаю задачу...");
 
   try {
-    await ensureAuth();
-    // 1. Создаём пустую задачу
-    const resp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/create_batch`, {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify({ p_name: name, p_domains: [] }),
-    });
-    if (!resp.ok) throw new Error(await resp.text());
-    const batchId = parseInt(await resp.text());
-
-    // 2. Добавляем домены чанками по 500 (обход лимита 1000)
-    const CHUNK = 500;
-    for (let i = 0; i < domains.length; i += CHUNK) {
-      const chunk = domains.slice(i, i + CHUNK);
-      const addResp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/add_batch_items`, {
-        method: "POST",
-        headers: authHeaders(),
-        body: JSON.stringify({ p_batch_id: batchId, p_domains: chunk }),
-      });
-      if (!addResp.ok) throw new Error(await addResp.text());
-      showStatus("run", `Добавляю домены... ${Math.min(i + CHUNK, domains.length)}/${domains.length}`);
-    }
-
+    const res = await workr("create", { name, domains });
     document.getElementById("domainInput").value = "";
     document.getElementById("batchName").value = "";
-    showStatus("ok", `Задача создана (${domains.length} доменов)`);
+    showStatus("ok", `Задача создана (${res.total} доменов)`);
     loadBatches();
   } catch (e) {
     showStatus("err", "Ошибка: " + e.message);
@@ -244,20 +251,9 @@ async function createBatch() {
 // ============================================================
 async function loadBatches() {
   try {
-    await ensureAuth();
-    const resp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/batches?select=*&order=created_at.desc`, {
-      headers: authHeaders(),
-    });
-    const batches = await resp.json();
-
-    // для каждой задачи считаем домены
-    const itemsResp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/batch_items?select=batch_id`, {
-      headers: authHeaders(),
-    });
-    const items = await itemsResp.json();
-
-    const counts = {};
-    for (const it of items) counts[it.batch_id] = (counts[it.batch_id] || 0) + 1;
+    const res = await workr("list");
+    const batches = res.batches || [];
+    const counts = res.counts || {};
 
     const tbody = document.getElementById("batchList");
     if (!batches.length) {
@@ -289,50 +285,27 @@ async function openBatch(id) {
   document.getElementById("viewList").classList.add("hidden");
   document.getElementById("viewBatch").classList.remove("hidden");
 
-  const resp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/batches?id=eq.${id}&select=name`, {
-    headers: authHeaders(),
-  });
-  const b = await resp.json();
-  document.getElementById("batchTitle").textContent = b[0]?.name || "Задача";
+  try {
+    const res = await workr("read", { batch_id: id });
+    document.getElementById("batchTitle").textContent = res.name || "Задача";
+  } catch {}
 
   refreshBatch();
   startPolling();
 }
 
 async function getBatchDomains() {
-  await ensureAuth();
-  const cntResp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/batch_domains_count`, {
-    method: "POST", headers: authHeaders(),
-    body: JSON.stringify({ p_batch_id: currentBatchId }),
-  });
-  const totalCount = parseInt(await cntResp.text());
-  if (!totalCount) return [];
-
-  const doms = [];
-  const PAGE = 500;
-  for (let offset = 0; offset < totalCount; offset += PAGE) {
-    const r = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/batch_domains`, {
-      method: "POST", headers: authHeaders(),
-      body: JSON.stringify({ p_batch_id: currentBatchId, p_offset: offset, p_limit: PAGE }),
-    });
-    const page = await r.json();
-    doms.push(...(page || []));
-  }
-  return doms;
+  const res = await workr("read", { batch_id: currentBatchId });
+  return res.domains || [];
 }
 
 async function refreshBatch() {
   if (!currentBatchId) return;
   try {
-    const doms = await getBatchDomains();
+    const res = await workr("read", { batch_id: currentBatchId });
+    const doms = res.domains || [];
+    const prog = res.progress || [];
     if (!doms.length) return;
-
-    // прогресс через batch_progress
-    const progResp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/batch_progress`, {
-      method: "POST", headers: authHeaders(),
-      body: JSON.stringify({ p_batch_id: currentBatchId }),
-    });
-    const prog = await progResp.json();
 
     // не перерисовываем, если данные не изменились
     const key = JSON.stringify(prog) + "|" + JSON.stringify(doms);
@@ -595,13 +568,12 @@ function renderBatch(doms) {
 async function kickData() {
   if (!currentBatchId) return;
   showStatus("run", "Запускаю сбор данных...");
-  const base = SURL.replace(/\/$/, "");
   for (const kind of ["rank", "meta", "crux", "geo", "intel"]) {
     try {
-      await fetch(`${base}/functions/v1/workr`, {
-        method: "POST", headers: authHeaders(),
-        body: JSON.stringify({ kind, limit: 30 }),
-      });
+      await apiFetch(FN, {
+        method: "POST", headers: { "Content-Type": "application/json", apikey: ANON },
+        body: JSON.stringify({ kind, limit:30 }),
+      }, 2);
     } catch {}
   }
   startPolling();
@@ -611,12 +583,11 @@ async function kickData() {
 async function kickScreenshots() {
   if (!currentBatchId) return;
   showStatus("run", "Запускаю скриншоты...");
-  const base = SURL.replace(/\/$/, "");
   try {
-    await fetch(`${base}/functions/v1/workr`, {
-      method: "POST", headers: authHeaders(),
+    await apiFetch(FN, {
+      method: "POST", headers: { "Content-Type": "application/json", apikey: ANON },
       body: JSON.stringify({ kind: "screenshot", limit: 30 }),
-    });
+    }, 2);
   } catch {}
   startPolling();
   showStatus("ok", "Скриншоты запущены");
@@ -635,7 +606,6 @@ function showList() {
 async function exportBatchXLSX() {
   if (!currentBatchId) return;
   if (typeof XLSX === "undefined") { alert("XLSX библиотека не загружена"); return; }
-  await ensureAuth();
 
   const doms = await getBatchDomains();
   if (!doms.length) { alert("Нет данных"); return; }
@@ -687,7 +657,6 @@ async function exportScreenshots() {
     alert("JSZip не загружен");
     return;
   }
-  await ensureAuth();
   const doms = await getBatchDomains();
 
   const withScreenshot = doms.filter(d => d.screenshot_path);
@@ -746,7 +715,6 @@ function showStatus(type, text) {
     th.style.cursor = 'pointer';
     th.onclick = () => sortBy(th.dataset.sort);
   });
-  await ensureAuth();
   await loadBatches();
 })();
 </script>

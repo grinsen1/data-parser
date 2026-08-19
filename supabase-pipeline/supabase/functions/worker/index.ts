@@ -355,13 +355,74 @@ serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey",
     }});
   }
 
   try {
-    const body = await req.json().catch(() => ({}));
+    let body: any = {};
+    if (req.method === "GET") {
+      const u = new URL(req.url);
+      body.action = u.searchParams.get("action") ?? "";
+      const bid = u.searchParams.get("batch_id");
+      if (bid) body.batch_id = parseInt(bid, 10);
+    } else {
+      body = await req.json().catch(() => ({}));
+    }
+
+    // === action-based API (для фронта, обходит PostgREST) ===
+    if (body.action === "create") {
+      const name = body.name || ("Задача " + new Date().toISOString().slice(0, 19));
+      const domains = (body.domains ?? []).map((d: string) => d.trim().toLowerCase()).filter(Boolean);
+
+      const { data: bid } = await supabase.rpc("create_batch", { p_name: name, p_domains: [] });
+      const CHUNK = 500;
+      for (let i = 0; i < domains.length; i += CHUNK) {
+        await supabase.rpc("add_batch_items", { p_batch_id: bid, p_domains: domains.slice(i, i + CHUNK) });
+      }
+      return json({ ok: true, batch_id: bid, total: domains.length });
+    }
+
+    if (body.action === "list") {
+      const { data: batches } = await supabase.from("batches").select("id,name,created_at").order("created_at", { ascending: false }).limit(100);
+      const counts: Record<string, number> = {};
+      const PAGE = 1000;
+      for (let off = 0; ; off += PAGE) {
+        const { data: items } = await supabase.from("batch_items").select("batch_id").range(off, off + PAGE - 1);
+        if (!items || items.length === 0) break;
+        for (const it of items) counts[it.batch_id] = (counts[it.batch_id] || 0) + 1;
+        if (items.length < PAGE) break;
+      }
+      return json({ ok: true, batches: batches ?? [], counts });
+    }
+
+    if (body.action === "read") {
+      const batchId = body.batch_id;
+      const { data: b } = await supabase.from("batches").select("id,name").eq("id", batchId).maybeSingle();
+
+      const domains: string[] = [];
+      const PAGE = 1000;
+      for (let off = 0; ; off += PAGE) {
+        const { data: items } = await supabase.from("batch_items")
+          .select("domain").eq("batch_id", batchId).order("domain").range(off, off + PAGE - 1);
+        if (!items || items.length === 0) break;
+        for (const it of items) domains.push(it.domain);
+        if (items.length < PAGE) break;
+      }
+
+      const doms: any[] = [];
+      const CHUNK = 1000;
+      for (let i = 0; i < domains.length; i += CHUNK) {
+        const { data: chunk } = await supabase.from("domains").select("*").in("domain", domains.slice(i, i + CHUNK));
+        for (const d of chunk ?? []) doms.push(d);
+      }
+
+      const { data: prog } = await supabase.rpc("batch_progress", { p_batch_id: batchId });
+      return json({ ok: true, name: b?.name ?? "", domains: doms, progress: prog ?? [] });
+    }
+
+    // === kind-based (обработка задач, вызывается кроном) ===
     const kind = body.kind ?? "rank";
     const limit = body.limit ?? 10;
 

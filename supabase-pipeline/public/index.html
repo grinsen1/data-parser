@@ -180,27 +180,25 @@ function cacheSet(id, data) {
 // Сетевой слой: все запросы через Edge Function workr
 // (обходит корпоративный прокси, который нестабильно режет соединения)
 // Ретрай "другим способом": уникальный _t (свежее соединение),
-// таймаут 10 сек, а для чтения — fallback с POST на GET.
+// таймаут 12 сек, для чтения — fallback с POST на GET.
 // ============================================================
 const FN = SURL.replace(/\/$/, "") + "/functions/v1/workr";
 
 async function fetchOnce(url, opts) {
   const sep = url.includes("?") ? "&" : "?";
   const finalUrl = url + sep + "_t=" + Date.now() + "_" + Math.random().toString(36).slice(2);
-  return fetch(finalUrl, { ...opts, signal: AbortSignal.timeout(10000) });
+  return fetch(finalUrl, { ...opts, signal: AbortSignal.timeout(12000) });
 }
 
-async function apiFetch(url, opts = {}, retries = 2) {
-  let lastErr;
+async function apiFetch(url, opts = {}, retries = 4) {
   for (let i = 0; i <= retries; i++) {
     try {
       return await fetchOnce(url, opts);
     } catch (e) {
-      lastErr = e;
-      if (i < retries) await new Promise(r => setTimeout(r, 500 * (i + 1)));
+      if (i < retries) await new Promise(r => setTimeout(r, 600 * (i + 1)));
     }
   }
-  throw lastErr;
+  throw new Error("Сеть/прокси не отвечает (таймаут). Попробуйте ещё раз.");
 }
 
 function parseWorkr(resp) {
@@ -219,7 +217,7 @@ async function workr(action, payload = {}) {
   const postBody = JSON.stringify({ action, ...payload });
 
   try {
-    return await parseWorkr(await apiFetch(FN, { method: "POST", headers, body: postBody }, 2));
+    return await parseWorkr(await apiFetch(FN, { method: "POST", headers, body: postBody }, 3));
   } catch (e) {
     if (!READ_ACTIONS.includes(action)) throw e;
   }
@@ -227,7 +225,7 @@ async function workr(action, payload = {}) {
   // чтение — другой способ: GET с query-параметрами
   const qs = new URLSearchParams({ action });
   if (payload.batch_id != null) qs.set("batch_id", payload.batch_id);
-  return await parseWorkr(await apiFetch(FN + "?" + qs.toString(), { method: "GET", headers }, 2));
+  return await parseWorkr(await apiFetch(FN + "?" + qs.toString(), { method: "GET", headers }, 3));
 }
 
 // ============================================================

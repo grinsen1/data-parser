@@ -157,6 +157,7 @@
 <script>
 const SURL = "https://dcrmfvfuyexjdygbupwr.supabase.co/";
 const ANON = "sb_publishable_POvIuGKyDKNEjBvO01ykhQ_5rW5iEIi";
+const SS_BASE = "https://cdn.appquantum.ru/";
 
 let currentBatchId = null;
 let pollTimer = null;
@@ -542,7 +543,7 @@ function renderBatch(doms) {
         : '<span class="muted">—</span>';
 
     const ss = d.screenshot_path
-      ? `<img class="ss-img" src="${d.screenshot_path}" loading="lazy" alt="">`
+      ? `<img class="ss-img" src="${SS_BASE}${encodeURIComponent(d.domain)}.jpg" loading="lazy" alt="" onerror="this.outerHTML='<span class=muted>—</span>'">`
       : '<span class="muted">—</span>';
 
     return `<tr data-domain="${d.domain}">
@@ -642,6 +643,7 @@ async function exportBatchXLSX() {
     if (c[0] === "verdict") v = verdictOf(d);
     if (c[0] === "tier") v = (d.rank_source == null) ? "" : tierOf(d.rank);
     if (c[0] === "ru_share" && v != null) v = Math.round(v * 10) / 10;
+    if (c[0] === "screenshot_path" && d.screenshot_path) v = `${SS_BASE}${d.domain}.jpg`;
     return v ?? "";
   }));
 
@@ -675,10 +677,9 @@ async function exportScreenshots() {
     const batch = withScreenshot.slice(i, i + CONC);
     const parts = await Promise.all(batch.map(async d => {
       try {
-        const resp = await fetch(d.screenshot_path);
+        const resp = await fetch(`${SS_BASE}${encodeURIComponent(d.domain)}.jpg`);
         const blob = await resp.blob();
-        const ext = (d.screenshot_path.match(/\.(\w+)(?:\?|$)/) || [,"jpg"])[1];
-        return { name: `${d.domain}.${ext}`, blob };
+        return { name: `${d.domain}.jpg`, blob };
       } catch { return null; }
     }));
     for (const p of parts) if (p) zip.file(p.name, p.blob);

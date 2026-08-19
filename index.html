@@ -167,6 +167,15 @@ let currentDoms = [];     // текущий список доменов (для 
 let sortField = null;
 let sortAsc = true;
 
+// кэш сформированных таблиц (localStorage) — чтобы не тянуть заново готовую задачу
+function cacheKey(id) { return "dp_batch_" + id; }
+function cacheGet(id) {
+  try { const v = localStorage.getItem(cacheKey(id)); return v ? JSON.parse(v) : null; } catch { return null; }
+}
+function cacheSet(id, data) {
+  try { localStorage.setItem(cacheKey(id), JSON.stringify(data)); } catch {}
+}
+
 // ============================================================
 // Сетевой слой: все запросы через Edge Function workr
 // (обходит корпоративный прокси, который нестабильно режет соединения)
@@ -286,10 +295,14 @@ async function openBatch(id) {
   document.getElementById("viewList").classList.add("hidden");
   document.getElementById("viewBatch").classList.remove("hidden");
 
-  try {
-    const res = await workr("read", { batch_id: id });
-    document.getElementById("batchTitle").textContent = res.name || "Задача";
-  } catch {}
+  // мгновенно показываем из кэша, если есть
+  const cached = cacheGet(id);
+  if (cached && cached.domains && cached.domains.length) {
+    document.getElementById("batchTitle").textContent = cached.name || "Задача";
+    renderProgress(cached.progress || []);
+    renderBatch(cached.domains);
+    lastRenderKey = JSON.stringify(cached.progress) + "|" + JSON.stringify(cached.domains);
+  }
 
   refreshBatch();
   startPolling();
@@ -307,6 +320,8 @@ async function refreshBatch() {
     const doms = res.domains || [];
     const prog = res.progress || [];
     if (!doms.length) return;
+
+    cacheSet(currentBatchId, { name: res.name, domains: doms, progress: prog });
 
     // не перерисовываем, если данные не изменились
     const key = JSON.stringify(prog) + "|" + JSON.stringify(doms);

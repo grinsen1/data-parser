@@ -411,10 +411,11 @@ serve(async (req: Request) => {
         if (items.length < PAGE) break;
       }
 
+      const COLS = "domain,rank,rank_source,title,description,category,super_category,lcp_p75,inp_p75,cls_p75,reload,bf_sum,navigate,prerender,phone,crux_variant,ru_share,ru_rank,top_country,foreign_tail,geo_verdict,screenshot_path,meta_error,geo_countries";
       const doms: any[] = [];
       const CHUNK = 1000;
       for (let i = 0; i < domains.length; i += CHUNK) {
-        const { data: chunk } = await supabase.from("domains").select("*").in("domain", domains.slice(i, i + CHUNK));
+        const { data: chunk } = await supabase.from("domains").select(COLS).in("domain", domains.slice(i, i + CHUNK));
         for (const d of chunk ?? []) doms.push(d);
       }
 

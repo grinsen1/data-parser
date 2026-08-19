@@ -171,43 +171,51 @@ let sortAsc = true;
 // Auth: анонимный вход (с refresh_token, чтобы не плодить юзеров)
 // ============================================================
 async function ensureAuth() {
-  let session = localStorage.getItem("sb_session");
-  if (session) {
-    const s = JSON.parse(session);
-
-    // 1. access_token жив?
-    const userResp = await fetch(`${SURL.replace(/\/$/, "")}/auth/v1/user`, {
-      headers: { apikey: ANON, Authorization: `Bearer ${s.access_token}` },
-    });
-    if (userResp.ok) { accessToken = s.access_token; return; }
-
-    // 2. access_token протух — обновляем через refresh_token (тот же юзер)
-    if (s.refresh_token) {
-      const refreshResp = await fetch(`${SURL.replace(/\/$/, "")}/auth/v1/token?grant_type=refresh_token`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", apikey: ANON },
-        body: JSON.stringify({ refresh_token: s.refresh_token }),
+  // 1. accessToken в памяти валиден?
+  if (accessToken) {
+    try {
+      const r = await fetch(`${SURL.replace(/\/$/, "")}/auth/v1/user`, {
+        headers: { apikey: ANON, Authorization: `Bearer ${accessToken}` },
       });
-      if (refreshResp.ok) {
-        const data = await refreshResp.json();
-        accessToken = data.access_token;
-        const merged = { ...s, ...data };
-        localStorage.setItem("sb_session", JSON.stringify(merged));
-        return;
-      }
-    }
+      if (r.ok) return;
+    } catch {}
   }
 
-  // 3. нового анонима создаём только если ничего не помогло
-  const resp = await fetch(`${SURL.replace(/\/$/, "")}/auth/v1/signup`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", apikey: ANON },
-    body: JSON.stringify({}),
-  });
-  if (!resp.ok) throw new Error("anon signup failed: " + await resp.text());
-  const data = await resp.json();
-  accessToken = data.access_token;
-  localStorage.setItem("sb_session", JSON.stringify(data));
+  // 2. пробуем refresh из localStorage
+  try {
+    const session = localStorage.getItem("sb_session");
+    if (session) {
+      const s = JSON.parse(session);
+      if (s.refresh_token) {
+        const r = await fetch(`${SURL.replace(/\/$/, "")}/auth/v1/token?grant_type=refresh_token`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", apikey: ANON },
+          body: JSON.stringify({ refresh_token: s.refresh_token }),
+        });
+        if (r.ok) {
+          const data = await r.json();
+          accessToken = data.access_token;
+          localStorage.setItem("sb_session", JSON.stringify({ ...s, ...data }));
+          return;
+        }
+      }
+    }
+  } catch {}
+
+  // 3. новый аноним
+  try {
+    const r = await fetch(`${SURL.replace(/\/$/, "")}/auth/v1/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: ANON },
+      body: JSON.stringify({}),
+    });
+    if (r.ok) {
+      const data = await r.json();
+      accessToken = data.access_token;
+      localStorage.setItem("sb_session", JSON.stringify(data));
+      return;
+    }
+  } catch {}
 }
 
 function authHeaders() {
@@ -232,6 +240,7 @@ async function createBatch() {
   showStatus("run", "Создаю задачу...");
 
   try {
+    await ensureAuth();
     // 1. Создаём пустую задачу
     const resp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/create_batch`, {
       method: "POST",
@@ -270,6 +279,7 @@ async function createBatch() {
 // ============================================================
 async function loadBatches() {
   try {
+    await ensureAuth();
     const resp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/batches?select=*&order=created_at.desc`, {
       headers: authHeaders(),
     });
@@ -325,6 +335,7 @@ async function openBatch(id) {
 }
 
 async function getBatchDomains() {
+  await ensureAuth();
   const cntResp = await fetch(`${SURL.replace(/\/$/, "")}/rest/v1/rpc/batch_domains_count`, {
     method: "POST", headers: authHeaders(),
     body: JSON.stringify({ p_batch_id: currentBatchId }),
@@ -659,6 +670,7 @@ function showList() {
 async function exportBatchXLSX() {
   if (!currentBatchId) return;
   if (typeof XLSX === "undefined") { alert("XLSX библиотека не загружена"); return; }
+  await ensureAuth();
 
   const doms = await getBatchDomains();
   if (!doms.length) { alert("Нет данных"); return; }
@@ -710,6 +722,7 @@ async function exportScreenshots() {
     alert("JSZip не загружен");
     return;
   }
+  await ensureAuth();
   const doms = await getBatchDomains();
 
   const withScreenshot = doms.filter(d => d.screenshot_path);

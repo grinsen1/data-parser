@@ -175,6 +175,10 @@ function cacheGet(id) {
 function cacheSet(id, data) {
   try { localStorage.setItem(cacheKey(id), JSON.stringify(data)); } catch {}
 }
+function cacheMarkPending(id) {
+  const c = cacheGet(id);
+  if (c) { c.done = false; cacheSet(id, c); }
+}
 
 // ============================================================
 // Сетевой слой: все запросы через Edge Function workr
@@ -246,7 +250,7 @@ async function createBatch() {
     document.getElementById("domainInput").value = "";
     document.getElementById("batchName").value = "";
     showStatus("ok", `Задача создана (${res.total} доменов)`);
-    loadBatches();
+    loadBatches(true);
   } catch (e) {
     showStatus("err", "Ошибка: " + e.message);
   } finally {
@@ -257,28 +261,39 @@ async function createBatch() {
 // ============================================================
 // Список задач
 // ============================================================
-async function loadBatches() {
+function renderBatchList(batches, counts) {
+  const tbody = document.getElementById("batchList");
+  if (!batches.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="muted">Нет задач. Создайте первую.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = batches.map(b => {
+    const n = counts[b.id] || 0;
+    const d = new Date(b.created_at).toLocaleString("ru");
+    return `<tr class="batch-row" onclick="openBatch(${b.id})">
+      <td><span class="link">${b.name || "Без имени"}</span></td>
+      <td>${n}</td>
+      <td><span class="muted">открыть →</span></td>
+      <td class="muted">${d}</td>
+    </tr>`;
+  }).join("");
+}
+
+async function loadBatches(force = false) {
+  // мгновенно показываем последнюю сформированную страницу
+  const cached = cacheGet("list");
+  if (cached && cached.batches) renderBatchList(cached.batches, cached.counts);
+
+  // не тягаем воркер, если кэш свежий (< 5 мин)
+  const fresh = cached && (Date.now() - (cached.ts || 0)) < 5 * 60 * 1000;
+  if (fresh && !force) return;
+
   try {
     const res = await workr("list");
     const batches = res.batches || [];
     const counts = res.counts || {};
-
-    const tbody = document.getElementById("batchList");
-    if (!batches.length) {
-      tbody.innerHTML = '<tr><td colspan="4" class="muted">Нет задач. Создайте первую.</td></tr>';
-      return;
-    }
-
-    tbody.innerHTML = batches.map(b => {
-      const n = counts[b.id] || 0;
-      const d = new Date(b.created_at).toLocaleString("ru");
-      return `<tr class="batch-row" onclick="openBatch(${b.id})">
-        <td><span class="link">${b.name || "Без имени"}</span></td>
-        <td>${n}</td>
-        <td><span class="muted">открыть →</span></td>
-        <td class="muted">${d}</td>
-      </tr>`;
-    }).join("");
+    cacheSet("list", { batches, counts, ts: Date.now() });
+    renderBatchList(batches, counts);
   } catch (e) {
     console.error(e);
   }
@@ -300,6 +315,8 @@ async function openBatch(id) {
     renderProgress(cached.progress || []);
     renderBatch(cached.domains);
     lastRenderKey = JSON.stringify(cached.progress) + "|" + JSON.stringify(cached.domains);
+    // задача отработана — отдаём готовую страницу, воркер не трогаем
+    if (cached.done) return;
   }
 
   refreshBatch();
@@ -319,7 +336,8 @@ async function refreshBatch() {
     const prog = res.progress || [];
     if (!doms.length) return;
 
-    cacheSet(currentBatchId, { name: res.name, domains: doms, progress: prog });
+    const hasPending = prog.some(r => r.state === "pending" || r.state === "leased");
+    cacheSet(currentBatchId, { name: res.name, domains: doms, progress: prog, done: !hasPending });
 
     // не перерисовываем, если данные не изменились
     const key = JSON.stringify(prog) + "|" + JSON.stringify(doms);
@@ -330,7 +348,6 @@ async function refreshBatch() {
     renderBatch(doms);
 
     // всё обработано — останавливаем поллинг (нет pending/leased)
-    const hasPending = prog.some(r => r.state === "pending" || r.state === "leased");
     if (!hasPending && pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
@@ -590,6 +607,8 @@ async function kickData() {
       }, 2);
     } catch {}
   }
+  cacheMarkPending(currentBatchId);
+  refreshBatch();
   startPolling();
   showStatus("ok", "Данные запущены, обновление через 30 сек");
 }
@@ -603,6 +622,8 @@ async function kickScreenshots() {
       body: JSON.stringify({ kind: "screenshot", limit: 30 }),
     }, 2);
   } catch {}
+  cacheMarkPending(currentBatchId);
+  refreshBatch();
   startPolling();
   showStatus("ok", "Скриншоты запущены");
 }

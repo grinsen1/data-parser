@@ -288,6 +288,20 @@ async function loadBatches(force = false) {
   const fresh = cached && (Date.now() - (cached.ts || 0)) < 5 * 60 * 1000;
   if (fresh && !force) return;
 
+  // 1) серверный снапшот с CDN (сформирован на бэкенде)
+  try {
+    const r = await fetch(`${SS_BASE}snapshots/list.json`, { signal: AbortSignal.timeout(8000) });
+    if (r.ok) {
+      const j = await r.json();
+      if (j && j.batches) {
+        cacheSet("list", { batches: j.batches, counts: j.counts || {}, ts: Date.now() });
+        renderBatchList(j.batches, j.counts || {});
+        return;
+      }
+    }
+  } catch {}
+
+  // 2) fallback на воркер
   try {
     const res = await workr("list");
     const batches = res.batches || [];
@@ -308,7 +322,7 @@ async function openBatch(id) {
   document.getElementById("viewList").classList.add("hidden");
   document.getElementById("viewBatch").classList.remove("hidden");
 
-  // мгновенно показываем из кэша, если есть
+  // 1) мгновенно показываем из локального кэша
   const cached = cacheGet(id);
   if (cached && cached.domains && cached.domains.length) {
     document.getElementById("batchTitle").textContent = cached.name || "Задача";
@@ -319,6 +333,23 @@ async function openBatch(id) {
     if (cached.done) return;
   }
 
+  // 2) серверный снапшот с CDN (сформирован на бэкенде)
+  try {
+    const r = await fetch(`${SS_BASE}snapshots/batch_${id}.json`, { signal: AbortSignal.timeout(8000) });
+    if (r.ok) {
+      const snap = await r.json();
+      if (snap && snap.done && snap.domains) {
+        document.getElementById("batchTitle").textContent = snap.name || "Задача";
+        renderProgress(snap.progress || []);
+        renderBatch(snap.domains);
+        lastRenderKey = JSON.stringify(snap.progress) + "|" + JSON.stringify(snap.domains);
+        cacheSet(id, { name: snap.name, domains: snap.domains, progress: snap.progress, done: true });
+        return;
+      }
+    }
+  } catch {}
+
+  // 3) живой воркер (незавершённая задача)
   refreshBatch();
   startPolling();
 }

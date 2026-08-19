@@ -351,6 +351,51 @@ const HANDLERS: Record<string, (d: string) => Promise<{ ok: boolean; error?: str
   geo: doGeo,
 };
 
+const COLS = "domain,rank,rank_source,title,description,category,super_category,lcp_p75,inp_p75,cls_p75,reload,bf_sum,navigate,prerender,phone,crux_variant,ru_share,ru_rank,top_country,foreign_tail,geo_verdict,screenshot_path,meta_error,geo_countries";
+
+async function buildList() {
+  const { data: batches } = await supabase.from("batches").select("id,name,created_at").order("created_at", { ascending: false }).limit(100);
+  const counts: Record<string, number> = {};
+  const PAGE = 1000;
+  for (let off = 0; ; off += PAGE) {
+    const { data: items } = await supabase.from("batch_items").select("batch_id").range(off, off + PAGE - 1);
+    if (!items || items.length === 0) break;
+    for (const it of items) counts[it.batch_id] = (counts[it.batch_id] || 0) + 1;
+    if (items.length < PAGE) break;
+  }
+  return { batches: batches ?? [], counts };
+}
+
+async function buildRead(batchId: number) {
+  const { data: b } = await supabase.from("batches").select("id,name").eq("id", batchId).maybeSingle();
+  const domains: string[] = [];
+  const PAGE = 1000;
+  for (let off = 0; ; off += PAGE) {
+    const { data: items } = await supabase.from("batch_items")
+      .select("domain").eq("batch_id", batchId).order("domain").range(off, off + PAGE - 1);
+    if (!items || items.length === 0) break;
+    for (const it of items) domains.push(it.domain);
+    if (items.length < PAGE) break;
+  }
+  const doms: any[] = [];
+  const CHUNK = 1000;
+  for (let i = 0; i < domains.length; i += CHUNK) {
+    const { data: chunk } = await supabase.from("domains").select(COLS).in("domain", domains.slice(i, i + CHUNK));
+    for (const d of chunk ?? []) doms.push(d);
+  }
+  const { data: prog } = await supabase.rpc("batch_progress", { p_batch_id: batchId });
+  return { name: b?.name ?? "", domains: doms, progress: prog ?? [] };
+}
+
+async function putR2(key: string, body: string | Uint8Array, contentType: string) {
+  const r = await R2.fetch(`${R2_ENDPOINT}/screenshots/${key}`, {
+    method: "PUT",
+    body,
+    headers: { "Content-Type": contentType },
+  });
+  return r.status;
+}
+
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: {
@@ -385,42 +430,27 @@ serve(async (req: Request) => {
     }
 
     if (body.action === "list") {
-      const { data: batches } = await supabase.from("batches").select("id,name,created_at").order("created_at", { ascending: false }).limit(100);
-      const counts: Record<string, number> = {};
-      const PAGE = 1000;
-      for (let off = 0; ; off += PAGE) {
-        const { data: items } = await supabase.from("batch_items").select("batch_id").range(off, off + PAGE - 1);
-        if (!items || items.length === 0) break;
-        for (const it of items) counts[it.batch_id] = (counts[it.batch_id] || 0) + 1;
-        if (items.length < PAGE) break;
-      }
-      return json({ ok: true, batches: batches ?? [], counts });
+      return json({ ok: true, ...(await buildList()) });
     }
 
     if (body.action === "read") {
-      const batchId = body.batch_id;
-      const { data: b } = await supabase.from("batches").select("id,name").eq("id", batchId).maybeSingle();
+      return json({ ok: true, ...(await buildRead(body.batch_id)) });
+    }
 
-      const domains: string[] = [];
-      const PAGE = 1000;
-      for (let off = 0; ; off += PAGE) {
-        const { data: items } = await supabase.from("batch_items")
-          .select("domain").eq("batch_id", batchId).order("domain").range(off, off + PAGE - 1);
-        if (!items || items.length === 0) break;
-        for (const it of items) domains.push(it.domain);
-        if (items.length < PAGE) break;
+    if (body.action === "snapshot") {
+      const { data: ids } = await supabase.rpc("list_done_batches");
+      let n = 0;
+      for (const row of (ids ?? [])) {
+        const batchId = typeof row === "object" && row !== null ? row.batch_id : row;
+        const snap = await buildRead(batchId);
+        (snap as any).done = true;
+        await putR2(`snapshots/batch_${batchId}.json`, JSON.stringify(snap), "application/json");
+        await supabase.from("batches").update({ snapshotted_at: new Date().toISOString() }).eq("id", batchId);
+        n++;
       }
-
-      const COLS = "domain,rank,rank_source,title,description,category,super_category,lcp_p75,inp_p75,cls_p75,reload,bf_sum,navigate,prerender,phone,crux_variant,ru_share,ru_rank,top_country,foreign_tail,geo_verdict,screenshot_path,meta_error,geo_countries";
-      const doms: any[] = [];
-      const CHUNK = 1000;
-      for (let i = 0; i < domains.length; i += CHUNK) {
-        const { data: chunk } = await supabase.from("domains").select(COLS).in("domain", domains.slice(i, i + CHUNK));
-        for (const d of chunk ?? []) doms.push(d);
-      }
-
-      const { data: prog } = await supabase.rpc("batch_progress", { p_batch_id: batchId });
-      return json({ ok: true, name: b?.name ?? "", domains: doms, progress: prog ?? [] });
+      const listSnap = await buildList();
+      await putR2("snapshots/list.json", JSON.stringify(listSnap), "application/json");
+      return json({ ok: true, snapshotted: n });
     }
 
     // === kind-based (обработка задач, вызывается кроном) ===

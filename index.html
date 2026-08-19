@@ -412,12 +412,14 @@ function renderProgress(prog) {
     return;
   }
 
-  // агрегируем по kind: total и done считаем из batch_progress (не из domains.length)
+  // агрегируем по kind: total и finished считаем из batch_progress (не из domains.length)
+  // finished = done + no_data + dead (терминальные состояния), dead показываем как ошибки
   const byKind = {};
   for (const row of prog) {
-    if (!byKind[row.kind]) byKind[row.kind] = { done: 0, total: 0 };
+    if (!byKind[row.kind]) byKind[row.kind] = { done: 0, dead: 0, total: 0 };
     byKind[row.kind].total += parseInt(row.cnt);
     if (row.state === "done" || row.state === "no_data") byKind[row.kind].done += parseInt(row.cnt);
+    if (row.state === "dead") byKind[row.kind].dead += parseInt(row.cnt);
   }
 
   const order = ["rank", "meta", "crux", "geo", "intel", "screenshot"];
@@ -425,13 +427,14 @@ function renderProgress(prog) {
     const k = byKind[kind];
     if (!k) return "";
     const total = k.total;
-    const done = k.done;
-    const pct = total ? Math.round(done / total * 100) : 0;
+    const finished = k.done + k.dead;
+    const pct = total ? Math.round(finished / total * 100) : 0;
     const color = pct >= 100 ? "#64dd17" : "#f7bd19";
+    const errNote = k.dead > 0 ? ` <span style="color:#e53935">· ${k.dead} ошибок</span>` : "";
     return `<div style="margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;margin-bottom:2px">
         <span>${KIND_LABELS[kind] || kind}</span>
-        <span class="muted">${done}/${total}</span>
+        <span class="muted">${finished}/${total}${errNote}</span>
       </div>
       <div style="height:4px;background:#242426;border-radius:2px;overflow:hidden">
         <div style="height:100%;width:${pct}%;background:${color};transition:width .3s"></div>

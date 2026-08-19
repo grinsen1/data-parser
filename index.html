@@ -93,8 +93,8 @@
       <div>
         <button class="btn-secondary" onclick="kickData()">Собрать данные</button>
         <button class="btn-secondary" onclick="kickScreenshots()">Скриншоты</button>
-        <button class="btn-secondary" onclick="exportBatchXLSX()">XLSX</button>
-        <button class="btn-secondary" onclick="exportScreenshots()">ZIP скринов</button>
+        <button id="btnXlsx" class="btn-secondary" onclick="downloadExport('xlsx')" disabled>XLSX</button>
+        <button id="btnZip" class="btn-secondary" onclick="downloadExport('zip')" disabled>ZIP скринов</button>
       </div>
     </div>
     <div class="card">
@@ -322,6 +322,8 @@ async function openBatch(id) {
   document.getElementById("viewList").classList.add("hidden");
   document.getElementById("viewBatch").classList.remove("hidden");
 
+  updateExportButtons();
+
   // 1) мгновенно показываем из локального кэша
   const cached = cacheGet(id);
   if (cached && cached.domains && cached.domains.length) {
@@ -377,6 +379,7 @@ async function refreshBatch() {
 
     renderProgress(prog);
     renderBatch(doms);
+    updateExportButtons();
 
     // всё обработано — останавливаем поллинг (нет pending/leased)
     if (!hasPending && pollTimer) {
@@ -667,103 +670,34 @@ function showList() {
 }
 
 // ============================================================
-// Export
+// Export — скачиваем готовые файлы с CDN (сформированы на сервере)
 // ============================================================
-async function exportBatchXLSX() {
+function downloadExport(ext) {
   if (!currentBatchId) return;
-  if (typeof XLSX === "undefined") { alert("XLSX библиотека не загружена"); return; }
-
-  const doms = await getBatchDomains();
-  if (!doms.length) { alert("Нет данных"); return; }
-
-  const cols = [
-    ["domain", "Домен"],
-    ["verdict", "Вердикт"],
-    ["rank", "Ранг CrUX"],
-    ["tier", "Тир"],
-    ["title", "Название"],
-    ["description", "Описание"],
-    ["category", "Категория"],
-    ["super_category", "Раздел"],
-    ["lcp_p75", "LCP мс"],
-    ["inp_p75", "INP мс"],
-    ["cls_p75", "CLS"],
-    ["reload", "Перезагрузки"],
-    ["bf_sum", "Переходы назад"],
-    ["navigate", "Новые заходы"],
-    ["prerender", "Предзагрузка"],
-    ["phone", "Доля мобильных"],
-    ["crux_variant", "Origin"],
-    ["ru_share", "Доля РФ %"],
-    ["ru_rank", "Место РФ"],
-    ["top_country", "Первая страна"],
-    ["foreign_tail", "Неевропейский хвост %"],
-    ["geo_verdict", "Гео-вердикт"],
-    ["screenshot_path", "Скриншот"],
-  ];
-
-  const header = cols.map(c => c[1]);
-  const rows = doms.map(d => cols.map(c => {
-    let v = d[c[0]];
-    if (c[0] === "verdict") v = verdictOf(d);
-    if (c[0] === "tier") v = (d.rank_source == null) ? "" : tierOf(d.rank);
-    if (c[0] === "ru_share" && v != null) v = Math.round(v * 10) / 10;
-    if (c[0] === "screenshot_path" && d.screenshot_path) v = `${SS_BASE}${d.domain}.jpg`;
-    return v ?? "";
-  }));
-
-  const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Домены");
-  XLSX.writeFile(wb, `batch_${currentBatchId}.xlsx`);
+  const a = document.createElement("a");
+  a.href = `${SS_BASE}exports/batch_${currentBatchId}.${ext}`;
+  a.download = "";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
-async function exportScreenshots() {
+async function updateExportButtons() {
   if (!currentBatchId) return;
-  if (typeof JSZip === "undefined") {
-    alert("JSZip не загружен");
-    return;
-  }
-  const doms = await getBatchDomains();
-
-  const withScreenshot = doms.filter(d => d.screenshot_path);
-  if (!withScreenshot.length) { alert("Нет скриншотов"); return; }
-
-  const total = withScreenshot.length;
-  document.getElementById("zipModal").style.display = "flex";
-  document.getElementById("zipCount").textContent = `0 / ${total}`;
-  document.getElementById("zipBar").style.width = "0%";
-  document.getElementById("zipStatus").textContent = "Скачиваю скриншоты...";
-
-  const zip = new JSZip();
-  let done = 0;
-  const CONC = 20;
-  for (let i = 0; i < withScreenshot.length; i += CONC) {
-    const batch = withScreenshot.slice(i, i + CONC);
-    const parts = await Promise.all(batch.map(async d => {
-      try {
-        const resp = await fetch(`${SS_BASE}${encodeURIComponent(d.domain)}.jpg`);
-        const blob = await resp.blob();
-        return { name: `${d.domain}.jpg`, blob };
-      } catch { return null; }
-    }));
-    for (const p of parts) if (p) zip.file(p.name, p.blob);
-    done += batch.length;
-    document.getElementById("zipCount").textContent = `${done} / ${total}`;
-    document.getElementById("zipBar").style.width = `${Math.round(done / total * 100)}%`;
-  }
-
-  document.getElementById("zipStatus").textContent = "Упаковываю...";
-  const content = await zip.generateAsync({ type: "blob" }, (meta) => {
-    document.getElementById("zipStatus").textContent = `Упаковка: ${meta.percent.toFixed(0)}%`;
-  });
-  document.getElementById("zipModal").style.display = "none";
-
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(content);
-  a.download = `screenshots_${currentBatchId}.zip`;
-  a.click();
-  showStatus("ok", `Архив готов (${total} файлов)`);
+  const xlsxBtn = document.getElementById("btnXlsx");
+  const zipBtn = document.getElementById("btnZip");
+  if (!xlsxBtn || !zipBtn) return;
+  const check = async (ext) => {
+    try {
+      const r = await fetch(`${SS_BASE}exports/batch_${currentBatchId}.${ext}`, { method: "HEAD", signal: AbortSignal.timeout(6000) });
+      return r.ok;
+    } catch { return false; }
+  };
+  const [hasXlsx, hasZip] = await Promise.all([check("xlsx"), check("zip")]);
+  xlsxBtn.disabled = !hasXlsx;
+  zipBtn.disabled = !hasZip;
+  xlsxBtn.textContent = hasXlsx ? "XLSX" : "XLSX…";
+  zipBtn.textContent = hasZip ? "ZIP скринов" : "ZIP…";
 }
 
 function showStatus(type, text) {

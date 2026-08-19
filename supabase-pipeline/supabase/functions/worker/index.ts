@@ -4,6 +4,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
 import { decode as decodePng } from "https://esm.sh/@jsquash/png@3.0.1";
 import { encode as encodeJpeg } from "https://esm.sh/@jsquash/jpeg@1.2.0";
+import { zipSync } from "https://esm.sh/fflate@0.8.2";
+import * as XLSX from "https://esm.sh/xlsx@0.18.5";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL") ?? "",
@@ -387,13 +389,104 @@ async function buildRead(batchId: number) {
   return { name: b?.name ?? "", domains: doms, progress: prog ?? [] };
 }
 
-async function putR2(key: string, body: string | Uint8Array, contentType: string) {
+async function putR2(key: string, body: string | Uint8Array, contentType: string, extraHeaders: Record<string, string> = {}) {
   const r = await R2.fetch(`${R2_ENDPOINT}/screenshots/${key}`, {
     method: "PUT",
     body,
-    headers: { "Content-Type": contentType },
+    headers: { "Content-Type": contentType, ...extraHeaders },
   });
   return r.status;
+}
+
+function tierOf(rank: number | null | undefined): string {
+  if (rank === null || rank === undefined) return "E";
+  if (rank <= 1000) return "A";
+  if (rank <= 50000) return "B";
+  if (rank <= 500000) return "C";
+  return "D";
+}
+
+function verdictOf(d: any): string {
+  const tier = d.rank_source == null ? null : tierOf(d.rank);
+  const foreignTail = d.foreign_tail ?? 0;
+  if (tier === "E" || (foreignTail > 15 && d.geo_verdict === "ok")) return "delete";
+  const lcp = d.lcp_p75, inp = d.inp_p75, cls = d.cls_p75, phone = d.phone, reload = d.reload, prerender = d.prerender;
+  if ((lcp != null && lcp > 4000) ||
+      (inp != null && inp > 500) ||
+      (cls != null && cls > 0.25) ||
+      (phone != null && phone > 0.9) ||
+      (reload != null && reload > 0.15) ||
+      (prerender != null && prerender > 0.035)) return "check";
+  return "ok";
+}
+
+const SS_BASE = "https://cdn.appquantum.ru/";
+
+function buildXlsx(doms: any[]): Uint8Array {
+  const cols: [string, string][] = [
+    ["domain", "Домен"], ["verdict", "Вердикт"], ["rank", "Ранг CrUX"], ["tier", "Тир"],
+    ["title", "Название"], ["description", "Описание"], ["category", "Категория"], ["super_category", "Раздел"],
+    ["lcp_p75", "LCP мс"], ["inp_p75", "INP мс"], ["cls_p75", "CLS"], ["reload", "Перезагрузки"],
+    ["bf_sum", "Переходы назад"], ["navigate", "Новые заходы"], ["prerender", "Предзагрузка"], ["phone", "Доля мобильных"],
+    ["crux_variant", "Origin"], ["ru_share", "Доля РФ %"], ["ru_rank", "Место РФ"], ["top_country", "Первая страна"],
+    ["foreign_tail", "Неевропейский хвост %"], ["geo_verdict", "Гео-вердикт"], ["screenshot_path", "Скриншот"],
+  ];
+  const header = cols.map(c => c[1]);
+  const rows = doms.map(d => cols.map(c => {
+    let v = d[c[0]];
+    if (c[0] === "verdict") v = verdictOf(d);
+    if (c[0] === "tier") v = (d.rank_source == null) ? "" : tierOf(d.rank);
+    if (c[0] === "ru_share" && v != null) v = Math.round(v * 10) / 10;
+    if (c[0] === "screenshot_path" && d.screenshot_path) v = `${SS_BASE}${d.domain}.jpg`;
+    return v ?? "";
+  }));
+  const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Домены");
+  const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+  return new Uint8Array(out);
+}
+
+async function buildZip(domains: string[]): Promise<Uint8Array> {
+  const files: Record<string, Uint8Array> = {};
+  const CONC = 25;
+  for (let i = 0; i < domains.length; i += CONC) {
+    const chunk = domains.slice(i, i + CONC);
+    const results = await Promise.all(chunk.map(async (domain) => {
+      const key = `${domain}.jpg`;
+      try {
+        const resp = await R2.fetch(`${R2_ENDPOINT}/screenshots/${key}`, { method: "GET" });
+        if (resp.status === 200) {
+          return [key, new Uint8Array(await resp.arrayBuffer())] as const;
+        }
+      } catch { /* skip */ }
+      return null;
+    }));
+    for (const r of results) if (r) files[r[0]] = r[1];
+  }
+  return zipSync(files, { level: 0 });
+}
+
+async function cleanupExports() {
+  try {
+    const cutoff = Date.now() - 24 * 3600 * 1000;
+    const resp = await R2.fetch(`${R2_ENDPOINT}/screenshots?list-type=2&prefix=exports/`, { method: "GET" });
+    if (resp.status !== 200) return;
+    const xml = await resp.text();
+    const re = /<Contents>([\s\S]*?)<\/Contents>/g;
+    let m;
+    while ((m = re.exec(xml)) !== null) {
+      const block = m[1];
+      const key = block.match(/<Key>([^<]+)<\/Key>/)?.[1];
+      const lm = block.match(/<LastModified>([^<]+)<\/LastModified>/)?.[1];
+      if (key && lm) {
+        const ts = Date.parse(lm);
+        if (ts > 0 && ts < cutoff) {
+          await R2.fetch(`${R2_ENDPOINT}/screenshots/${key}`, { method: "DELETE" });
+        }
+      }
+    }
+  } catch { /* ignore */ }
 }
 
 serve(async (req: Request) => {
@@ -438,6 +531,7 @@ serve(async (req: Request) => {
     }
 
     if (body.action === "snapshot") {
+      await cleanupExports();
       const { data: ids } = await supabase.rpc("list_done_batches");
       let n = 0;
       for (const row of (ids ?? [])) {
@@ -445,6 +539,20 @@ serve(async (req: Request) => {
         const snap = await buildRead(batchId);
         (snap as any).done = true;
         await putR2(`snapshots/batch_${batchId}.json`, JSON.stringify(snap), "application/json");
+
+        const xlsx = buildXlsx(snap.domains);
+        await putR2(`exports/batch_${batchId}.xlsx`, xlsx, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", {
+          "Content-Disposition": `attachment; filename="batch_${batchId}.xlsx"`,
+        });
+
+        const domsWithSS = snap.domains.filter((d: any) => d.screenshot_path).map((d: any) => d.domain);
+        if (domsWithSS.length > 0) {
+          const zip = await buildZip(domsWithSS);
+          await putR2(`exports/batch_${batchId}.zip`, zip, "application/zip", {
+            "Content-Disposition": `attachment; filename="batch_${batchId}_screenshots.zip"`,
+          });
+        }
+
         await supabase.from("batches").update({ snapshotted_at: new Date().toISOString() }).eq("id", batchId);
         n++;
       }

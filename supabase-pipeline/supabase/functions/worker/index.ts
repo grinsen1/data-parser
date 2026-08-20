@@ -550,8 +550,10 @@ serve(async (req: Request) => {
     if (body.action === "snapshot") {
       await cleanupExports();
       const { data: ids } = await supabase.rpc("list_done_batches");
+      const MAX = 6;
       let n = 0;
       for (const row of (ids ?? [])) {
+        if (n >= MAX) break;
         const batchId = typeof row === "object" && row !== null ? row.batch_id : row;
         const snap = await buildRead(batchId);
         (snap as any).done = true;

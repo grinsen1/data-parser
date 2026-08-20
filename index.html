@@ -452,10 +452,9 @@ function tierOf(rank) {
 }
 
 function verdictOf(d) {
-  // delete: нет живого трафика (E) или покупной иностранный трафик
+  // delete: нет живого трафика (E). Иностранный след пока не delete — только инфо.
   const tier = d.rank_source == null ? null : tierOf(d.rank);
-  const foreignTail = d.foreign_tail ?? 0;
-  if (tier === "E" || (foreignTail > 15 && d.geo_verdict === "ok")) return "delete";
+  if (tier === "E") return "delete";
 
   // check: подозрительные сигналы
   const lcp = d.lcp_p75, inp = d.inp_p75, cls = d.cls_p75, phone = d.phone, reload = d.reload, prerender = d.prerender;
@@ -538,47 +537,33 @@ function prerenderCell(d) { const v = d.prerender; return v == null ? num(null) 
 function phoneCell(d) { const v = d.phone; return v == null ? num(null) : `<span ${v > 0.9 ? bad() : ''}>${Math.round(v*100)}%</span>`; }
 
 function geoCell(d) {
-  if (d.ru_share == null) return '<span class="muted">—</span>';
-  const foreign = (d.foreign_tail ?? 0) > 15 && d.geo_verdict === 'ok';
-  const ru = `${Math.round(d.ru_share * 10) / 10}%`;
-  const tag = foreign ? ' <span class="rm-tag" title="Неевропейский хвост > 15% — закупленный иностранный трафик">ино</span>' : '';
-  const note = d.geo_verdict === 'unknown' ? '<br><span class="muted" style="font-size:11px">мало данных</span>' : `<br><span class="muted" style="font-size:11px">${d.top_country || ''}</span>`;
-  return `<span class="link" onclick="openGeo('${d.domain}')">${ru}${tag}</span>${note}`;
+  const ft = d.foreign_trace || [];
+  if (!ft.length) return '<span class="muted">—</span>';
+  return `<span class="link" style="color:#ffd600" onclick="openGeo('${d.domain}')" title="Иностранный след по CrUX">⚠ ино · ${ft.length}</span>`;
+}
+
+function fmtBucket(b) {
+  if (b >= 1000000) return (b / 1000000) + "М";
+  if (b >= 1000) return (b / 1000) + "К";
+  return String(b);
 }
 
 function openGeo(domain) {
   const d = Object.values(domCache).find(x => x.domain === domain);
   if (!d) return;
-  document.getElementById("geoModalTitle").textContent = `География: ${domain}`;
+  document.getElementById("geoModalTitle").textContent = `Иностранный след: ${domain}`;
 
-  const countries = d.geo_countries || [];
-  if (!countries.length) {
-    document.getElementById("geoModalBody").innerHTML = '<span class="muted">Нет данных</span>';
+  const ft = d.foreign_trace || [];
+  if (!ft.length) {
+    document.getElementById("geoModalBody").innerHTML = '<span class="muted">Нет иностранного следа</span>';
   } else {
-    // группы: всё меньше 10% суммарно сгруппируем в "остальные"
-    const major = countries.filter(c => parseFloat(c.value) >= 10);
-    const minor = countries.filter(c => parseFloat(c.value) < 10);
-    const minorSum = minor.reduce((s, c) => s + parseFloat(c.value), 0);
-
-    const rows = major.map(c => {
-      const v = parseFloat(c.value);
-      const isRu = c.clientCountryAlpha2 === "RU";
-      const isNonEu = ["IN","VN","BD","PK","PH","ID","NG","EG"].includes(c.clientCountryAlpha2);
-      const color = isNonEu ? '#e53935' : isRu ? '#64dd17' : '#9d9da3';
+    const rows = ft.map(c => {
       return `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #242426">
-        <span style="color:${color}">${c.clientCountryAlpha2}</span>
-        <span>${Math.round(v * 10) / 10}%</span>
+        <span>${c.country.toUpperCase()}</span>
+        <span style="color:#9d9da3">топ-${fmtBucket(c.bucket)}</span>
       </div>`;
     }).join("");
-
-    const otherRow = minorSum > 0
-      ? `<div style="display:flex;justify-content:space-between;padding:4px 0;color:#9d9da3">
-          <span>остальные (${minor.length} стран)</span>
-          <span>${Math.round(minorSum * 10) / 10}%</span>
-        </div>`
-      : '';
-
-    document.getElementById("geoModalBody").innerHTML = rows + otherRow;
+    document.getElementById("geoModalBody").innerHTML = rows;
   }
   document.getElementById("geoModal").style.display = "flex";
 }

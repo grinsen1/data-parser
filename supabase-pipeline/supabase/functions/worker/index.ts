@@ -266,36 +266,53 @@ const NON_EU = ["IN", "VN", "BD", "PK", "PH", "ID", "NG", "EG"];
 
 async function doGeo(domain: string): Promise<{ ok: boolean; error?: string }> {
   try {
-    const url = `https://api.cloudflare.com/client/v4/radar/dns/top/locations?domain=${domain}&dateRange=28d&limit=20&format=JSON`;
-    const resp = await fetch(url, {
-      headers: { Authorization: `Bearer ${CF_API_TOKEN}` },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!resp.ok) return { ok: false, error: `CF ${resp.status}` };
+    // 1) Иностранный след по CrUX (foreign_presence) — независимо от Cloudflare
+    const { data: fp } = await supabase
+      .from("foreign_presence")
+      .select("country, bucket")
+      .eq("domain", domain)
+      .order("bucket", { ascending: true })
+      .limit(500);
+    const foreign_trace = (fp ?? []).map((r: any) => ({ country: r.country, bucket: r.bucket }));
 
-    const json = await resp.json();
-    const top = json?.result?.top_0 ?? [];
-
-    let ru_share = 0, ru_rank = null, top_country = "", foreign_tail = 0;
-    if (top.length > 0) {
-      top_country = top[0].clientCountryAlpha2;
-      top.forEach((x: any, i: number) => {
-        const v = parseFloat(x.value);
-        if (x.clientCountryAlpha2 === "RU") { ru_share = v; ru_rank = i + 1; }
-        if (NON_EU.includes(x.clientCountryAlpha2)) foreign_tail += v;
+    // 2) Cloudflare Radar (гео-проценты) — опционально, фейл не критичен
+    let ru_share: number | null = null, ru_rank: number | null = null;
+    let top_country = "", foreign_tail: number | null = null;
+    let geo_verdict = "unknown";
+    let geo_countries: any = null, geo_raw: any = null;
+    try {
+      const url = `https://api.cloudflare.com/client/v4/radar/dns/top/locations?domain=${domain}&dateRange=28d&limit=20&format=JSON`;
+      const resp = await fetch(url, {
+        headers: { Authorization: `Bearer ${CF_API_TOKEN}` },
+        signal: AbortSignal.timeout(20_000),
       });
-    }
-    const geo_verdict = top.length <= 2 ? "unknown" : "ok";
+      if (resp.ok) {
+        const json = await resp.json();
+        const top = json?.result?.top_0 ?? [];
+        geo_countries = top;
+        geo_raw = json;
+        if (top.length > 0) {
+          top_country = top[0].clientCountryAlpha2;
+          top.forEach((x: any, i: number) => {
+            const v = parseFloat(x.value);
+            if (x.clientCountryAlpha2 === "RU") { ru_share = v; ru_rank = i + 1; }
+            if (NON_EU.includes(x.clientCountryAlpha2)) foreign_tail = (foreign_tail ?? 0) + v;
+          });
+        }
+        geo_verdict = top.length <= 2 ? "unknown" : "ok";
+      }
+    } catch { /* Cloudflare недоступен — не критично */ }
 
     await supabase.from("domains").upsert({
       domain,
       ru_share,
       ru_rank,
       top_country,
-      foreign_tail: Math.round(foreign_tail * 100) / 100,
+      foreign_tail: foreign_tail != null ? Math.round(foreign_tail * 100) / 100 : null,
       geo_verdict,
-      geo_countries: top,
-      geo_raw: json,
+      geo_countries,
+      geo_raw,
+      foreign_trace,
       checked_at: new Date().toISOString(),
     });
     return { ok: true };
@@ -353,7 +370,7 @@ const HANDLERS: Record<string, (d: string) => Promise<{ ok: boolean; error?: str
   geo: doGeo,
 };
 
-const COLS = "domain,rank,rank_source,title,description,category,super_category,lcp_p75,inp_p75,cls_p75,reload,bf_sum,navigate,prerender,phone,crux_variant,ru_share,ru_rank,top_country,foreign_tail,geo_verdict,screenshot_path,meta_error,geo_countries";
+const COLS = "domain,rank,rank_source,title,description,category,super_category,lcp_p75,inp_p75,cls_p75,reload,bf_sum,navigate,prerender,phone,crux_variant,ru_share,ru_rank,top_country,foreign_tail,geo_verdict,screenshot_path,meta_error,geo_countries,foreign_trace";
 
 async function buildList() {
   const { data: batches } = await supabase.from("batches").select("id,name,created_at").order("created_at", { ascending: false }).limit(100);
